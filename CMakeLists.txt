@@ -8,7 +8,7 @@ set(CMAKE_BUILD_TYPE=Debug)
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
-add_executable(toy main.cpp)
+add_executable(toy main.cpp Renderer.cpp)
 target_link_libraries(toy ${CONAN_LIBS})
 target_precompile_headers(toy PUBLIC include.hpp)
 
