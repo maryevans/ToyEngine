@@ -1,0 +1,9 @@
+[submodule "spdlog"]
+	path = spdlog
+	url = git@github.com:gabime/spdlog.git
+[submodule "glm"]
+	path = glm
+	url = git@github.com:g-truc/glm.git
+[submodule "glfw"]
+	path = glfw
+	url = git@github.com:glfw/glfw.git
