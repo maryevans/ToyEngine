@@ -12,3 +12,4 @@
 #include <chrono>
 #include <array>
 #include <optional>
+#include <ranges>
