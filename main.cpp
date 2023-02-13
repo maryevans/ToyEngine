@@ -1,16 +1,9 @@
 #include "include.hpp"
-
-#define DEBUG
-
 #include "Renderer.cpp"
 
 
 int main() noexcept{
-#ifdef DEBUG
   spdlog::set_level(spdlog::level::trace);
-#endif
-
-//  spdlog::set_level(spdlog::level::trace);
 
   if(not glfwInit() and not glfwVulkanSupported()) std::abort();
 
