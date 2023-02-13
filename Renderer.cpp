@@ -1,4 +1,5 @@
 #pragma once
+#define DEBUG
 #include "include.hpp"
 
 struct Depth_Image_Handles {
@@ -11,6 +12,53 @@ struct Image_Handles{
   vk::UniqueImage image;
   vk::UniqueDeviceMemory memory;
 };
+
+struct Vertex{
+    glm::vec3 position;
+    glm::vec3 color;
+    glm::vec2 tex_coord;
+};
+
+uint64_t total_allocated = 0;
+
+void * operator new(std::size_t size){
+
+  if(size == 0) ++size;
+
+  if(void * ptr = std::malloc(size)){
+    total_allocated += size;
+    //fmt::print("Allocated bytes {}, total {}\n", size, total_allocated);
+    return ptr;
+  };
+
+  spdlog::critical("Bad alloc");
+  std::abort();
+}
+
+void * operator new[](std::size_t size){
+  if(size == 0) ++size;
+
+  if(void * ptr = std::malloc(size)){
+    total_allocated += size;
+    //fmt::print("Allocated bytes {}, total {}\n", size, total_allocated);
+    return ptr;
+  };
+
+  spdlog::critical("Bad alloc");
+  std::abort();
+}
+
+void operator delete(void * ptr, std::size_t size){
+  std::free(ptr);
+  total_allocated -= size;
+  fmt::print("Deleted {} bytes, total {}\n", size, total_allocated);
+}
+
+void operator delete[](void * ptr, std::size_t size){
+  std::free(ptr);
+  total_allocated -= size;
+  fmt::print("Deleted {} bytes, total {}\n", size, total_allocated);
+}
 
 class Renderer{
 public:
@@ -28,7 +76,9 @@ public:
     swapchain_image_views(std::move(renderer.swapchain_image_views)),
     render_pass(std::move(renderer.render_pass)),
     descriptor_set_layout(std::move(renderer.descriptor_set_layout)),
-    pieplien_layout(std::move(renderer.pieplien_layout)),
+    vert_shader(std::move(renderer.vert_shader)),
+    frag_shader(std::move(renderer.frag_shader)),
+    graphics_pipeline_layout(std::move(renderer.graphics_pipeline_layout)),
     graphics_pipeline(std::move(renderer.graphics_pipeline)),
     depth_image_handles(std::move(renderer.depth_image_handles)),
     depth_buffers(std::move(renderer.depth_buffers)),
@@ -59,7 +109,9 @@ public:
     swapchain_image_views = std::move(renderer.swapchain_image_views);
     render_pass = std::move(renderer.render_pass);
     descriptor_set_layout = std::move(renderer.descriptor_set_layout);
-    pieplien_layout = std::move(renderer.pieplien_layout);
+    vert_shader = std::move(renderer.vert_shader);
+    frag_shader = std::move(renderer.frag_shader);
+    graphics_pipeline_layout = std::move(renderer.graphics_pipeline_layout);
     graphics_pipeline = std::move(renderer.graphics_pipeline);
     depth_image_handles = std::move(renderer.depth_image_handles);
     depth_buffers = std::move(renderer.depth_buffers);
@@ -87,7 +139,7 @@ private:
 
   vk::UniqueInstance instance;
 #ifdef DEBUG
-  vk::DebugUtilsMessengerUnique messenger;
+  vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> messenger;
 #endif
   vk::UniqueDevice device;
   vk::UniqueSurfaceKHR surface;
@@ -95,7 +147,9 @@ private:
   std::vector<vk::UniqueImageView> swapchain_image_views;
   vk::UniqueRenderPass render_pass;
   vk::UniqueDescriptorSetLayout descriptor_set_layout;
-  vk::UniquePipelineLayout pieplien_layout;
+  vk::UniqueShaderModule vert_shader;
+  vk::UniqueShaderModule frag_shader;
+  vk::UniquePipelineLayout graphics_pipeline_layout;
   vk::UniquePipeline graphics_pipeline;
   Depth_Image_Handles depth_image_handles;
   std::vector<vk::UniqueFramebuffer> depth_buffers;
@@ -126,7 +180,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     void* pUserData) {
 
     if(messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) spdlog::error("\nvalidation layer: {}\n", pCallbackData->pMessage);
-    if(messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) spdlog::warn("\nvalidation layer: {}\n", pCallbackData->pMessage);
+    if((messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) 
+      spdlog::warn("\nvalidation layer: {}\n", pCallbackData->pMessage);
     else spdlog::info("\nvalidation layer: {}\n", pCallbackData->pMessage);
 
     return VK_FALSE;
@@ -134,7 +189,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 #endif
 
 [[nodiscard]]
-inline auto create_renderer(GLFWwindow * window) noexcept{
+inline auto create_renderer(GLFWwindow * window) noexcept try{
+  spdlog::info("Creating Renderer");
+
   auto renderer = Renderer();
   constexpr auto appinfo = vk::ApplicationInfo{
     .pApplicationName = "Toy",
@@ -158,12 +215,39 @@ inline auto create_renderer(GLFWwindow * window) noexcept{
     return extensions;
   });
 
-  auto const layers = "VK_LAYER_KHRONOS_validation";
+  auto const layers = std::invoke([&] -> std::vector<const char *>{
+#ifdef DEBUG
+    return std::vector{"VK_LAYER_KHRONOS_validation"};
+#else
+    return std::vector<const char*>{};
+#endif
+  });
+
+  {
+      auto found_layers = std::vector<bool>(layers.size());
+
+      for(auto const & layer : vk::enumerateInstanceLayerProperties()){
+        spdlog::info("Layer {}", layer.layerName);
+        for(auto i =0; i < layers.size(); ++i){
+          if(std::string_view(layer.layerName) == std::string_view(layers[i])){
+            spdlog::info("Found Layer {}", layer.layerName);
+            found_layers[i] = true;
+          }
+        }
+      }
+
+      for(auto i = 0; i < layers.size(); ++i){
+        spdlog::info("bla {}" ,found_layers[i]);
+        if(not found_layers[i]) spdlog::critical("Missing vulkan layer: {}", layers[i]);
+      }
+
+      for(auto const & layer : found_layers) if(not layer) std::abort();
+  }
 
   auto const instanceInfo = vk::InstanceCreateInfo{
     .pApplicationInfo = &appinfo,
-    .enabledLayerCount = 1,
-    .ppEnabledLayerNames = &layers,
+    .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+    .ppEnabledLayerNames = layers.data(),
     .enabledExtensionCount = (uint32_t) extensions.size(),
     .ppEnabledExtensionNames = extensions.data(),
   };
@@ -172,12 +256,14 @@ inline auto create_renderer(GLFWwindow * window) noexcept{
 
 #ifdef DEBUG
   auto const messengerInfo = vk::DebugUtilsMessengerCreateInfoEXT{
-    .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
+    .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
+    .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral 
+      | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
     .pfnUserCallback = debugCallback,
     .pUserData = nullptr
   };
 
-  auto messenger = renderer.instance->createDebugUtilsMessengerEXTUnique(messengerInfo);
+  renderer.messenger = renderer.instance->createDebugUtilsMessengerEXTUnique(messengerInfo, nullptr, vk::DispatchLoaderDynamic(renderer.instance.get(), vkGetInstanceProcAddr));
 #endif
 
   renderer.surface = std::invoke([&]{
@@ -253,8 +339,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept{
       vk::DeviceCreateInfo{ 
         .queueCreateInfoCount = queueCreateInfos.size(),
         .pQueueCreateInfos = queueCreateInfos.data(),
-        .enabledLayerCount = 1,
-        .ppEnabledLayerNames = &layers,
+        .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+        .ppEnabledLayerNames = layers.data(),
         .enabledExtensionCount = device_extensions.size(),
         .ppEnabledExtensionNames = device_extensions.data()
       });
@@ -357,25 +443,314 @@ inline auto create_renderer(GLFWwindow * window) noexcept{
       .finalLayout = vk::ImageLayout::ePresentSrcKHR,
     };
 
-    auto const color_attachment_ref = vk::AttachmentReference{.attachment = 0, .layout = vk::ImageLayout::eColorAttachmentOptimal};
 
-    auto const 
+    auto const color_attachment_ref = vk::AttachmentReference{
+    .attachment = 0, 
+    .layout = vk::ImageLayout::eColorAttachmentOptimal
+    };
+
+
+    auto const depth_format = std::invoke([&]{
+        //TODO: figure out what formats are needed for depth
+        auto const formats ={
+          vk::Format::eD32Sfloat,
+          vk::Format::eD32SfloatS8Uint,
+          vk::Format::eD24UnormS8Uint
+        };
+
+        auto const feature = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
+
+        for(auto const & format : formats){
+          auto const props = physical_device.getFormatProperties(format);
+          if((props.optimalTilingFeatures & feature) == feature){
+            return format;
+          }
+        }
+
+        spdlog::error("Unable to get depth format");
+        std::abort();
+    });
+
+    auto const depth_attachment = vk::AttachmentDescription{
+      .format = depth_format,
+      .samples = vk::SampleCountFlagBits::e1,
+      .loadOp = vk::AttachmentLoadOp::eClear,
+      .storeOp = vk::AttachmentStoreOp::eStore,
+      .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+      .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+      .initialLayout = vk::ImageLayout::eUndefined,
+      .finalLayout = vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
+    };
+
+    auto const depth_attachment_ref = vk::AttachmentReference{
+      .attachment = 1,
+      .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+    };
 
     auto const subpass = vk::SubpassDescription{
       .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
       .colorAttachmentCount = 1,
       .pColorAttachments = & color_attachment_ref,
-      .
+      .pDepthStencilAttachment = & depth_attachment_ref,
     };
 
-    return renderer.device->createRenderPass(vk::RenderPassCreateInfo{
-        .attachmentCount = 1,
-        .pAttachments = &color_attachment,
-        .
-    });
+    auto const subpass_dependency = vk::SubpassDependency{
+      .srcSubpass = VK_SUBPASS_EXTERNAL,
+      .dstSubpass = 0,
+      .srcStageMask = 
+        vk::PipelineStageFlagBits::eColorAttachmentOutput 
+        | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+      .dstStageMask =
+        vk::PipelineStageFlagBits::eColorAttachmentOutput
+        | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+      .srcAccessMask = {},
+      .dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite
+        | vk::AccessFlagBits::eDepthStencilAttachmentWrite
+    };
+
+    auto const attachments = std::array{color_attachment, depth_attachment};
+    auto const info = vk::RenderPassCreateInfo{
+      .flags = {},
+      .attachmentCount = attachments.size(),
+      .pAttachments = attachments.data(),
+      .subpassCount = 1,
+      .pSubpasses = &subpass,
+      .dependencyCount = 1,
+      .pDependencies = &subpass_dependency,
+    };
+
+    return renderer.device->createRenderPassUnique(info);
   });
 
+  renderer.descriptor_set_layout = std::invoke([&]{
+
+      auto const uniform_buffer_binding = vk::DescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex
+      };
+
+      auto const sampler_binding = vk::DescriptorSetLayoutBinding{
+        .binding = 1,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eFragment,
+      };
+
+      auto const descriptor_sets = std::array{uniform_buffer_binding, sampler_binding};
+
+      auto info = vk::DescriptorSetLayoutCreateInfo{
+        .bindingCount = descriptor_sets.size(),
+        .pBindings = descriptor_sets.data()
+      };
+      
+      return renderer.device->createDescriptorSetLayoutUnique(info);
+  });
+
+  renderer.graphics_pipeline_layout = std::invoke([&]{
+
+      auto const info = vk::PipelineLayoutCreateInfo{
+        .setLayoutCount = 1,
+        .pSetLayouts = &renderer.descriptor_set_layout.get()
+      };
+
+      return renderer.device->createPipelineLayoutUnique(info);
+  });
+
+  auto load_shader_module = [&](std::filesystem::path shader){
+    auto file = std::ifstream(shader.string(), std::ios::ate | std::ios::binary);
+    auto const fileSize = (size_t) file.tellg();
+    auto buffer = std::vector<char>(fileSize);
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+
+    auto const shader_info = vk::ShaderModuleCreateInfo{
+      .codeSize = buffer.size(),
+      .pCode = reinterpret_cast<uint32_t const *>(buffer.data())
+    };
+
+    return renderer.device->createShaderModuleUnique(shader_info);
+  };
+
+  renderer.vert_shader = load_shader_module("./vert.spv");
+  renderer.frag_shader = load_shader_module("./frag.spv");
+
+  renderer.graphics_pipeline = std::invoke([&] {
+    spdlog::info("Createing render pipeline");
+
+    spdlog::trace("create vert shader stage info");
+    auto const vert_shader_stage = vk::PipelineShaderStageCreateInfo{
+      .stage = vk::ShaderStageFlagBits::eVertex,
+      .module = renderer.vert_shader.get(),
+      .pName = "main"
+    };
+
+    spdlog::trace("create frag shader stage info");
+    auto const frag_shader_stage  = vk::PipelineShaderStageCreateInfo{
+      .stage = vk::ShaderStageFlagBits::eFragment,
+      .module = renderer.frag_shader.get(),
+      .pName = "main"
+    };
+
+    auto const shader_stages = std::array{vert_shader_stage, frag_shader_stage};
+
+    spdlog::trace("creating vertex binding description");
+    //TODO: make this bind an structure of arrays.
+    auto const vertex_binding_description = vk::VertexInputBindingDescription{
+      .binding=0,
+      .stride = sizeof(Vertex),
+      .inputRate = vk::VertexInputRate::eVertex
+    };
+
+    spdlog::trace("creating vertex binding attributes");
+    auto const vertex_binding_attributes = std::array{
+      vk::VertexInputAttributeDescription{
+        .location = 0,
+        .binding = vertex_binding_description.binding,
+        .format = vk::Format::eR32G32B32Sfloat,
+        .offset = offsetof(Vertex, position),
+      },
+      vk::VertexInputAttributeDescription{
+        .location = 1,
+        .binding = vertex_binding_description.binding,
+        .format = vk::Format::eR32G32B32Sfloat,
+        .offset = offsetof(Vertex, color)
+      },
+      vk::VertexInputAttributeDescription{
+        .location = 2,
+        .binding = vertex_binding_description.binding,
+        .format = vk::Format::eR32G32Sfloat,
+        .offset = offsetof(Vertex, tex_coord)
+      }
+    };
+
+    spdlog::trace("creating vertex input state info");
+    auto const vertex_input_state = vk::PipelineVertexInputStateCreateInfo{
+      .vertexBindingDescriptionCount = 1,
+      .pVertexBindingDescriptions = &vertex_binding_description,
+      .vertexAttributeDescriptionCount = vertex_binding_attributes.size(),
+      .pVertexAttributeDescriptions = vertex_binding_attributes.data(),
+    };
+
+    spdlog::trace("creating input assembly state info");
+    auto const input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{
+      .topology = vk::PrimitiveTopology::eTriangleList,
+      .primitiveRestartEnable = VK_FALSE
+    };
+
+    spdlog::trace("defining viewport");
+    auto const viewport = vk::Viewport{
+      .x = 0.0f, .y = 0.0f, 
+      .width = static_cast<float>(renderer.swapchain_extent.width),
+      .height = static_cast<float>(renderer.swapchain_extent.height),
+      .minDepth = 0.0f,
+      .maxDepth = 1.0f,
+    };
+
+    auto const scissor = vk::Rect2D{
+      .offset = {0,0},
+      .extent = renderer.swapchain_extent
+    };
+
+    spdlog::trace("creating viewport state info");
+    auto const viewport_state = vk::PipelineViewportStateCreateInfo{
+      .viewportCount = 1,
+      .pViewports = &viewport,
+      .scissorCount = 1,
+      .pScissors = &scissor,
+    };
+
+    auto const rasterization_state = vk::PipelineRasterizationStateCreateInfo{
+      .depthClampEnable = VK_FALSE,
+      .rasterizerDiscardEnable = VK_FALSE,
+      .polygonMode = vk::PolygonMode::eFill,
+      .cullMode = vk::CullModeFlagBits::eBack,
+      .frontFace = vk::FrontFace::eCounterClockwise,
+      .depthBiasEnable = VK_FALSE,
+    };
+
+    auto const multisampling = vk::PipelineMultisampleStateCreateInfo{
+      .rasterizationSamples = vk::SampleCountFlagBits::e1,
+      .sampleShadingEnable = VK_FALSE,
+      .minSampleShading = 1.0f,
+      .pSampleMask = nullptr,
+      .alphaToCoverageEnable = VK_FALSE,
+      .alphaToOneEnable = VK_FALSE,
+    };
+
+    auto const color_blend_attachemnt = vk::PipelineColorBlendAttachmentState{
+      .blendEnable = VK_FALSE,
+      .srcColorBlendFactor = vk::BlendFactor::eOne,
+      .dstAlphaBlendFactor = vk::BlendFactor::eOne,
+      .colorWriteMask = vk::ColorComponentFlagBits::eR
+        | vk::ColorComponentFlagBits::eG
+        | vk::ColorComponentFlagBits::eB
+        | vk::ColorComponentFlagBits::eA
+    };
+
+    auto const blend_constants = std::array{0.0f, 0.0f, 0.0f, 0.0f};
+
+    auto const color_blending = vk::PipelineColorBlendStateCreateInfo{
+      .logicOpEnable = VK_FALSE,
+      .logicOp = vk::LogicOp::eCopy,
+      .attachmentCount = 1,
+      .pAttachments = &color_blend_attachemnt,
+      .blendConstants = blend_constants
+    };
+
+    auto const dynamic_states = std::array{
+      vk::DynamicState::eViewport,
+      vk::DynamicState::eScissor,
+      vk::DynamicState::eLineWidth
+    };
+
+    auto const dynamic_state = vk::PipelineDynamicStateCreateInfo{
+      .dynamicStateCount = dynamic_states.size(),
+      .pDynamicStates = dynamic_states.data()
+    };
+
+    auto const depth_stencil = vk::PipelineDepthStencilStateCreateInfo{
+      .depthTestEnable = VK_TRUE,
+      .depthWriteEnable = VK_TRUE,
+      .depthCompareOp = vk::CompareOp::eLess,
+      .depthBoundsTestEnable = VK_FALSE,
+      .stencilTestEnable = VK_FALSE,
+      .minDepthBounds = 0.0f,
+      .maxDepthBounds = 1.0f
+    };
+
+    auto const info = vk::GraphicsPipelineCreateInfo{
+      .stageCount = shader_stages.size(), 
+      .pStages = shader_stages.data(),
+      .pVertexInputState = &vertex_input_state,
+      .pViewportState = &viewport_state,
+      .pRasterizationState = &rasterization_state,
+      .pMultisampleState = &multisampling,
+      .pDepthStencilState = &depth_stencil,
+      .pColorBlendState = &color_blending,
+      .pDynamicState = &dynamic_state,
+      .layout = renderer.graphics_pipeline_layout.get(),
+      .renderPass = renderer.render_pass.get()
+    };
+
+    spdlog::trace("Creating graphics pipeline");
+    auto result = renderer.device->createGraphicsPipelineUnique({}, info);
+
+    if(static_cast<VkResult>(result.result) not_eq VK_SUCCESS){
+      spdlog::critical("Unable to create graphics pipeline");
+      throw std::runtime_error("bla");
+    }
+
+    spdlog::trace("jlajf");
+    return std::move(result.value);
+  }); 
+
+  spdlog::trace("jlajf");
   return std::move(renderer);
+} catch (std::exception & exception){
+  spdlog::critical("Exception:{}", exception.what());
+  std::abort();
 }
 
 
