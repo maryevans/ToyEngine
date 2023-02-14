@@ -1,6 +1,12 @@
 #pragma once
 #include "include.hpp"
 
+
+struct Queue_Indices{
+  uint32_t graphics;
+  uint32_t present;
+};;
+
 struct Depth_Image_Handles {
   vk::UniqueImage image;
   vk::UniqueDeviceMemory memory;
@@ -16,6 +22,24 @@ struct Vertex{
     glm::vec3 position;
     glm::vec3 color;
     glm::vec2 tex_coord;
+};
+
+//Cube
+auto const vertices = std::vector<Vertex>{
+    {{0,    0.5,    0.0},     {1,0,1},    {1, 0}},
+    {{-0.5, 0,      0.0},     {0,1,0},    {0, 0}},
+    {{0.5,  0,      0.0},     {1,0,1},    {0, 1}},
+    {{1,    1,      0.0},     {1,1,0},    {1, 1}},
+
+    {{0,    0.5,    -0.5},     {1,0,1},    {1, 0}},
+    {{-0.5, 0,      -0.5},     {0,1,0},    {0, 0}},
+    {{0.5,  0,      -0.5},     {1,0,1},    {0, 1}},
+    {{1,    1,      -0.5},     {1,1,0},    {1, 1}},
+};
+
+auto const indices = std::vector<uint32_t>{
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
 };
 
 uint64_t total_allocated = 0;
@@ -61,14 +85,24 @@ void operator delete[](void * ptr, std::size_t size){
   fmt::print("Deleted {} bytes, total {}\n", size, total_allocated);
 }
 
+constexpr auto default_viewport(vk::Extent2D swapchain_extent){
+  return vk::Viewport{
+    .x = 0.0f, .y = 0.0f, 
+    .width = static_cast<float>(swapchain_extent.width),
+    .height = static_cast<float>(swapchain_extent.height),
+    .minDepth = 0.0f,
+    .maxDepth = 1.0f,
+  };
+}
+
 //Creates an object to submit commands to for the current scope.
 struct Command_Scope{
     Command_Scope(
-            vk::UniqueDevice const & device, 
-            vk::UniqueCommandPool const & commandPool, 
-            vk::Queue const & graphicsQueue): 
-        device(device),
-        graphic_queue(graphicsQueue) {
+        vk::UniqueDevice const & device, 
+        vk::UniqueCommandPool const & commandPool, 
+        vk::Queue const & graphicsQueue): 
+      device(device),
+      graphic_queue(graphicsQueue) {
 
       auto const alloc_info = vk::CommandBufferAllocateInfo{
         .commandPool = commandPool.get(), 
@@ -104,84 +138,23 @@ public:
   void draw_frame();
   friend inline auto create_renderer(GLFWwindow * window) noexcept;
 
-  Renderer(Renderer && renderer):
-    instance(std::move(renderer.instance)),
-
-    messenger(std::move(renderer.messenger)),
-
-    device(std::move(renderer.device)),
-    surface(std::move(renderer.surface)),
-    swapchain(std::move(renderer.swapchain)),
-    swapchain_image_views(std::move(renderer.swapchain_image_views)),
-    render_pass(std::move(renderer.render_pass)),
-    descriptor_set_layout(std::move(renderer.descriptor_set_layout)),
-    vert_shader(std::move(renderer.vert_shader)),
-    frag_shader(std::move(renderer.frag_shader)),
-    graphics_pipeline_layout(std::move(renderer.graphics_pipeline_layout)),
-    graphics_pipeline(std::move(renderer.graphics_pipeline)),
-    depth_image_handles(std::move(renderer.depth_image_handles)),
-    depth_buffers(std::move(renderer.depth_buffers)),
-    command_pool(std::move(renderer.command_pool)),
-    descriptor_pool(std::move(renderer.descriptor_pool)),
-    descriptor_sets(std::move(renderer.descriptor_sets)),
-    command_buffers(std::move(renderer.command_buffers)),
-    vertex_buffer(std::move(renderer.vertex_buffer)),
-    vertex_buffer_memory(std::move(renderer.vertex_buffer_memory)),
-    index_buffer(std::move(renderer.index_buffer)),
-    index_buffer_memory(std::move(renderer.index_buffer_memory)),
-    uniform_buffers(std::move(renderer.uniform_buffers)),
-    image_handles(std::move(renderer.image_handles)),
-    texture_mipmap_levels(std::move(renderer.texture_mipmap_levels)),
-    texture_image_view(std::move(renderer.texture_image_view)),
-    texture_sampler(std::move(renderer.texture_sampler)),
-    swapchain_extent(std::move(renderer.swapchain_extent))
-  { }
-
-  Renderer & operator=(Renderer && renderer){
-    instance = std::move(renderer.instance);
-
-    messenger = std::move(renderer.messenger);
-
-    device = std::move(renderer.device);
-    surface = std::move(renderer.surface);
-    swapchain = std::move(renderer.swapchain);
-    swapchain_image_views = std::move(renderer.swapchain_image_views);
-    render_pass = std::move(renderer.render_pass);
-    descriptor_set_layout = std::move(renderer.descriptor_set_layout);
-    vert_shader = std::move(renderer.vert_shader);
-    frag_shader = std::move(renderer.frag_shader);
-    graphics_pipeline_layout = std::move(renderer.graphics_pipeline_layout);
-    graphics_pipeline = std::move(renderer.graphics_pipeline);
-    depth_image_handles = std::move(renderer.depth_image_handles);
-    depth_buffers = std::move(renderer.depth_buffers);
-    command_pool = std::move(renderer.command_pool);
-    descriptor_pool = std::move(renderer.descriptor_pool);
-    descriptor_sets = std::move(renderer.descriptor_sets);
-    command_buffers = std::move(renderer.command_buffers);
-    vertex_buffer = std::move(renderer.vertex_buffer);
-    vertex_buffer_memory = std::move(renderer.vertex_buffer_memory);
-    index_buffer = std::move(renderer.index_buffer);
-    index_buffer_memory = std::move(renderer.index_buffer_memory);
-    uniform_buffers = std::move(renderer.uniform_buffers);
-    image_handles = std::move(renderer.image_handles);
-    texture_mipmap_levels = std::move(renderer.texture_mipmap_levels);
-    texture_image_view = std::move(renderer.texture_image_view);
-    texture_sampler = std::move(renderer.texture_sampler);
-    swapchain_extent = std::move(renderer.swapchain_extent);
-
-    return *this;
+  inline auto get_viewport()const noexcept{
+    return default_viewport(swapchain_extent);
   }
-
-  ~Renderer(){}
 private:
-  [[nodiscard]] Renderer() noexcept{}
+
+  struct Synchronization{
+    vk::UniqueSemaphore image_availableSemaphore;
+    vk::UniqueSemaphore render_finishedSemaphore;
+    vk::UniqueFence in_flight_fence;
+  };
 
   vk::UniqueInstance instance;
-
   vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> messenger;
-
+  vk::PhysicalDevice physical_device;
   vk::UniqueDevice device;
   vk::UniqueSurfaceKHR surface;
+  Queue_Indices queue_indices; 
   vk::UniqueSwapchainKHR swapchain;
   std::vector<vk::UniqueImageView> swapchain_image_views;
   vk::UniqueRenderPass render_pass;
@@ -206,9 +179,10 @@ private:
   vk::UniqueImageView texture_image_view;
   vk::UniqueSampler texture_sampler;
   vk::Extent2D swapchain_extent;
-
-  Renderer(Renderer const &) = delete;
-  Renderer & operator=(Renderer const &) = delete;
+  uint32_t max_frames_in_flight = 2;
+  std::vector<Renderer::Synchronization> per_frame_sync;
+  std::vector<vk::Fence> swapchain_images_in_flight;
+  uint32_t current_frame;
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -230,7 +204,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 inline auto create_renderer(GLFWwindow * window) noexcept try{
   spdlog::info("Creating Renderer");
 
-  auto renderer = Renderer();
   constexpr auto appinfo = vk::ApplicationInfo{
     .pApplicationName = "Toy",
     .applicationVersion = 0,
@@ -269,7 +242,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     .ppEnabledExtensionNames = extensions.data(),
   };
 
-  renderer.instance = vk::createInstanceUnique(instanceInfo);
+  auto instance = vk::createInstanceUnique(instanceInfo);
 
   auto const messengerInfo = vk::DebugUtilsMessengerCreateInfoEXT{
     .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
@@ -280,17 +253,17 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     .pUserData = nullptr
   };
 
-  renderer.messenger = renderer.instance->createDebugUtilsMessengerEXTUnique(messengerInfo, nullptr, vk::DispatchLoaderDynamic(renderer.instance.get(), vkGetInstanceProcAddr));
+  auto messenger = instance->createDebugUtilsMessengerEXTUnique(messengerInfo, nullptr, vk::DispatchLoaderDynamic(instance.get(), vkGetInstanceProcAddr));
 
 
-  renderer.surface = std::invoke([&]{
+  auto surface = std::invoke([&]{
       VkSurfaceKHR surface;
-      if(glfwCreateWindowSurface(*renderer.instance, window, nullptr, &surface)){
+      if(glfwCreateWindowSurface(*instance, window, nullptr, &surface)){
         spdlog::error("Unable to create window surface");
         std::abort();
       }
 
-      return vk::UniqueSurfaceKHR(surface, vk::ObjectDestroy<vk::Instance, vk::DispatchLoaderStatic>(renderer.instance.get()));
+      return vk::UniqueSurfaceKHR(surface, vk::ObjectDestroy<vk::Instance, vk::DispatchLoaderStatic>(instance.get()));
   });
 
   auto const physical_device = std::invoke([&]{
@@ -299,12 +272,13 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         return true;
       };
 
-      for(auto physical_device : renderer.instance->enumeratePhysicalDevices())
+      for(auto physical_device : instance->enumeratePhysicalDevices())
       {
         if(physical_device_has_ideal_properties(physical_device)){
           return physical_device;
         }
       }
+
       spdlog::error("No viable gpu");
       std::abort();
   });
@@ -313,23 +287,26 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       struct {
         int graphics_index = -1;
         int present_index = -1;
-      } indices; 
+      } temp_indices; 
 
       auto const properties = physical_device.getQueueFamilyProperties();
 
       for(auto i = 0; i < properties.size(); ++i){
-        if(indices.graphics_index < 0 and properties[i].queueFlags & vk::QueueFlagBits::eGraphics){
+        if(temp_indices.graphics_index < 0 and properties[i].queueFlags & vk::QueueFlagBits::eGraphics){
           spdlog::info("Found graphics index {}", 1);
-          indices.graphics_index = i;
+          temp_indices.graphics_index = i;
         }
           
-        if(indices.present_index < 0 and physical_device.getSurfaceSupportKHR(1, *renderer.surface)) {
+        if(temp_indices.present_index < 0 and physical_device.getSurfaceSupportKHR(1, *surface)) {
           //spdlog::info("Found present iindex {}", i);
-          indices.present_index = i;
+          temp_indices.present_index = i;
         }
 
-        if(indices.graphics_index >= 0 and indices.present_index >= 0){
-          return indices;
+        if(temp_indices.graphics_index >= 0 and temp_indices.present_index >= 0){
+          return Queue_Indices{
+            .graphics = (uint32_t)temp_indices.graphics_index,
+            .present = (uint32_t)temp_indices.present_index
+          };
         }
       }
 
@@ -337,8 +314,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       std::abort();
   });
 
-  auto const graphics_family_index = family_indices.graphics_index;
-  auto const present_family_index = family_indices.present_index;
+  auto const graphics_family_index = family_indices.graphics;
+  auto const present_family_index = family_indices.present;
 
   static auto graphicsQueuePriority = 1.0f;
 
@@ -352,7 +329,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   auto const device_extensions = std::array{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-  renderer.device = physical_device.createDeviceUnique(
+  auto device = physical_device.createDeviceUnique(
       vk::DeviceCreateInfo{ 
         .queueCreateInfoCount = queueCreateInfos.size(),
         .pQueueCreateInfos = queueCreateInfos.data(),
@@ -362,18 +339,18 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .ppEnabledExtensionNames = device_extensions.data()
       });
 
-  auto const graphicsQueue = renderer.device->getQueue(graphics_family_index, 0);
+  auto const graphicsQueue = device->getQueue(graphics_family_index, 0);
 
-  auto const capabilities = physical_device.getSurfaceCapabilitiesKHR(renderer.surface.get());
+  auto const capabilities = physical_device.getSurfaceCapabilitiesKHR(surface.get());
   //TODO: pcik a better format
-  auto const surface_format = physical_device.getSurfaceFormatsKHR(renderer.surface.get()).back();
+  auto const surface_format = physical_device.getSurfaceFormatsKHR(surface.get()).back();
   //TODO: pick a better present mode
-  auto const present_mode = physical_device.getSurfacePresentModesKHR(renderer.surface.get()).back();
+  auto const present_mode = physical_device.getSurfacePresentModesKHR(surface.get()).back();
 
   auto const image_count = capabilities.minImageCount + 1;
 
   auto const image_format = surface_format.format;
-  renderer.swapchain_extent = std::invoke([&]{
+  auto swapchain_extent = std::invoke([&]{
       if(capabilities.currentExtent.width not_eq UINT32_MAX)
         return capabilities.currentExtent;
 
@@ -396,7 +373,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       };
   }); 
 
-  renderer.swapchain = std::invoke([&]{ 
+  auto swapchain = std::invoke([&]{ 
       auto sharing_mode = std::invoke([&]{
         if(graphics_family_index not_eq present_family_index){
           return vk::SharingMode::eExclusive;
@@ -406,11 +383,11 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       });
 
       auto info = vk::SwapchainCreateInfoKHR{
-        .surface = renderer.surface.get(),
+        .surface = surface.get(),
         .minImageCount = image_count,
         .imageFormat = image_format,
         .imageColorSpace = surface_format.colorSpace,
-        .imageExtent = renderer.swapchain_extent,
+        .imageExtent = swapchain_extent,
         .imageArrayLayers = 1,
         .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
         .imageSharingMode = sharing_mode,
@@ -421,7 +398,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .oldSwapchain = nullptr,
       };
 
-      return renderer.device->createSwapchainKHRUnique(info);
+      return device->createSwapchainKHRUnique(info);
   });
 
   auto const create_image_view = [](vk::Device const device, vk::Image const image, vk::Format const format, vk::ImageAspectFlags const aspect_flags, uint32_t mip_levels) noexcept{
@@ -439,16 +416,16 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     });
   };
 
-  renderer.swapchain_image_views = std::invoke([&]{
-      auto images = renderer.device->getSwapchainImagesKHR(renderer.swapchain.get());
+  auto swapchain_image_views = std::invoke([&]{
+      auto images = device->getSwapchainImagesKHR(swapchain.get());
       auto image_views = std::vector<vk::UniqueImageView>(images.size());
       for(auto i = 0; i < images.size(); ++i){
-        image_views[i] = create_image_view(renderer.device.get(), images[i], surface_format.format, vk::ImageAspectFlagBits::eColor, 1);
+        image_views[i] = create_image_view(device.get(), images[i], surface_format.format, vk::ImageAspectFlagBits::eColor, 1);
       } 
       return image_views;
   });
 
-  renderer.render_pass = std::invoke([&] noexcept {
+  auto render_pass = std::invoke([&] noexcept {
     auto const color_attachment = vk::AttachmentDescription{
       .format = surface_format.format,
       .samples = vk::SampleCountFlagBits::e1,
@@ -536,10 +513,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .pDependencies = &subpass_dependency,
     };
 
-    return renderer.device->createRenderPassUnique(info);
+    return device->createRenderPassUnique(info);
   });
 
-  renderer.descriptor_set_layout = std::invoke([&]{
+  auto descriptor_set_layout = std::invoke([&]{
 
       auto const uniform_buffer_binding = vk::DescriptorSetLayoutBinding{
         .binding = 0,
@@ -562,17 +539,17 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .pBindings = descriptor_sets.data()
       };
       
-      return renderer.device->createDescriptorSetLayoutUnique(info);
+      return device->createDescriptorSetLayoutUnique(info);
   });
 
-  renderer.graphics_pipeline_layout = std::invoke([&]{
+  auto graphics_pipeline_layout = std::invoke([&]{
 
       auto const info = vk::PipelineLayoutCreateInfo{
         .setLayoutCount = 1,
-        .pSetLayouts = &renderer.descriptor_set_layout.get()
+        .pSetLayouts = &descriptor_set_layout.get()
       };
 
-      return renderer.device->createPipelineLayoutUnique(info);
+      return device->createPipelineLayoutUnique(info);
   });
 
   auto load_shader_module = [&](std::filesystem::path shader){
@@ -587,27 +564,27 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .pCode = reinterpret_cast<uint32_t const *>(buffer.data())
     };
 
-    return renderer.device->createShaderModuleUnique(shader_info);
+    return device->createShaderModuleUnique(shader_info);
   };
 
   spdlog::info("Loading shader modules");
-  renderer.vert_shader = load_shader_module("./vert.spv");
-  renderer.frag_shader = load_shader_module("./frag.spv");
+  auto vert_shader = load_shader_module("./vert.spv");
+  auto frag_shader = load_shader_module("./frag.spv");
 
-  renderer.graphics_pipeline = std::invoke([&] {
+  auto graphics_pipeline = std::invoke([&] {
     spdlog::info("Createing render pipeline");
 
     spdlog::trace("create vert shader stage info");
     auto const vert_shader_stage = vk::PipelineShaderStageCreateInfo{
       .stage = vk::ShaderStageFlagBits::eVertex,
-      .module = renderer.vert_shader.get(),
+      .module = vert_shader.get(),
       .pName = "main"
     };
 
     spdlog::trace("create frag shader stage info");
     auto const frag_shader_stage  = vk::PipelineShaderStageCreateInfo{
       .stage = vk::ShaderStageFlagBits::eFragment,
-      .module = renderer.frag_shader.get(),
+      .module = frag_shader.get(),
       .pName = "main"
     };
 
@@ -658,17 +635,11 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     };
 
     spdlog::trace("defining viewport");
-    auto const viewport = vk::Viewport{
-      .x = 0.0f, .y = 0.0f, 
-      .width = static_cast<float>(renderer.swapchain_extent.width),
-      .height = static_cast<float>(renderer.swapchain_extent.height),
-      .minDepth = 0.0f,
-      .maxDepth = 1.0f,
-    };
+    auto const viewport = default_viewport(swapchain_extent);
 
     auto const scissor = vk::Rect2D{
       .offset = {0,0},
-      .extent = renderer.swapchain_extent
+      .extent = swapchain_extent
     };
 
     spdlog::trace("creating viewport state info");
@@ -749,12 +720,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .pDepthStencilState = &depth_stencil,
       .pColorBlendState = &color_blending,
       .pDynamicState = &dynamic_state,
-      .layout = renderer.graphics_pipeline_layout.get(),
-      .renderPass = renderer.render_pass.get()
+      .layout = graphics_pipeline_layout.get(),
+      .renderPass = render_pass.get()
     };
 
     spdlog::trace("Creating graphics pipeline");
-    auto result = renderer.device->createGraphicsPipelineUnique({}, info);
+    auto result = device->createGraphicsPipelineUnique({}, info);
 
     if(static_cast<VkResult>(result.result) not_eq VK_SUCCESS){
       spdlog::critical("Unable to create graphics pipeline");
@@ -764,10 +735,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     return std::move(result.value);
   }); 
 
-  auto frame_buffers = [&]{
+  auto frame_buffers = std::invoke([&]{
     auto frame_buffers = std::vector<vk::UniqueFramebuffer>();
-    frame_buffers.reserve(renderer.swapchain_image_views.size());
-    for(auto const & imageView : renderer.swapchain_image_views){
+    frame_buffers.reserve(swapchain_image_views.size());
+    for(auto const & imageView : swapchain_image_views){
         
         auto const attachments = std::vector{ 
             imageView.get(), 
@@ -775,32 +746,32 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         };
 
         auto const info = vk::FramebufferCreateInfo{
-          .renderPass = renderer.render_pass.get(),
+          .renderPass = render_pass.get(),
           .attachmentCount = static_cast<uint32_t>(attachments.size()),
           .pAttachments = attachments.data(),
-          .width = renderer.swapchain_extent.width,
-          .height = renderer.swapchain_extent.height,
+          .width = swapchain_extent.width,
+          .height = swapchain_extent.height,
           .layers = 1
         };
 
-        frame_buffers.push_back(renderer.device->createFramebufferUnique(info));
+        frame_buffers.push_back(device->createFramebufferUnique(info));
     }
     return frame_buffers;
-  };
+  });
 
-  renderer.command_pool = renderer.device->createCommandPoolUnique(vk::CommandPoolCreateInfo{
+  auto command_pool = device->createCommandPoolUnique(vk::CommandPoolCreateInfo{
       .queueFamilyIndex = static_cast<uint32_t>(graphics_family_index)
   });
 
-  renderer.descriptor_pool = std::invoke([&]{
+  auto descriptor_pool = std::invoke([&]{
       auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
         .type = vk::DescriptorType::eUniformBuffer,
-        .descriptorCount = (uint32_t)renderer.swapchain_image_views.size()
+        .descriptorCount = (uint32_t)swapchain_image_views.size()
       };
 
       auto const texture_sampler_pool_size = vk::DescriptorPoolSize{
         .type = vk::DescriptorType::eCombinedImageSampler,
-        .descriptorCount = (uint32_t)renderer.swapchain_image_views.size()
+        .descriptorCount = (uint32_t)swapchain_image_views.size()
       };
 
       auto const pool_sizes = std::array{uniform_buffer_pool_size, texture_sampler_pool_size};
@@ -811,15 +782,15 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .pPoolSizes = pool_sizes.data()
       };
 
-      return renderer.device->createDescriptorPoolUnique(pool_info);
+      return device->createDescriptorPoolUnique(pool_info);
   });
 
-  auto const graphics_queue = renderer.device->getQueue(graphics_family_index, 0);
+  auto const graphics_queue = device->getQueue(graphics_family_index, 0);
 
-  auto const find_memory_type_index = [&](vk::MemoryPropertyFlags memory_flags)->uint32_t{
+  auto const find_memory_type_index = [&](vk::MemoryRequirements requirements, vk::MemoryPropertyFlags memory_flags)->uint32_t{
       auto const memory_properties = physical_device.getMemoryProperties();
     for(auto memory_index = 0; memory_index < memory_properties.memoryTypeCount; ++memory_index){
-      if(buffer_memory_requirements.memoryTypeBits & (1 << memory_index) && (memory_properties.memoryTypes[memory_index].propertyFlags & memory_flags )){
+      if(requirements.memoryTypeBits & (1 << memory_index) && (memory_properties.memoryTypes[memory_index].propertyFlags & memory_flags )){
         return memory_index;
       }
     }
@@ -837,14 +808,14 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .usage = usage,
       .sharingMode = vk::SharingMode::eExclusive
     };
-    auto buffer = renderer.device->createBufferUnique(buffer_info);
-    auto const buffer_memory_requirements = renderer.device->getBufferMemoryRequirements(buffer.get());
+    auto buffer = device->createBufferUnique(buffer_info);
+    auto const buffer_memory_requirements = device->getBufferMemoryRequirements(buffer.get());
     auto buffer_memory_info = vk::MemoryAllocateInfo{
       .allocationSize = buffer_memory_requirements.size,
-      .memoryTypeIndex = find_memory_type_index(memory_properties), 
+      .memoryTypeIndex = find_memory_type_index(buffer_memory_requirements, memory_properties), 
     };
-    auto buffer_memory = renderer.device->allocateMemoryUnique(buffer_memory_info);
-    renderer.device->bindBufferMemory(buffer.get(), buffer_memory.get(), 0);
+    auto buffer_memory = device->allocateMemoryUnique(buffer_memory_info);
+    device->bindBufferMemory(buffer.get(), buffer_memory.get(), 0);
 
     struct{
       vk::UniqueBuffer buffer;
@@ -856,7 +827,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   };
 
   auto const copy_buffer = [&](vk::UniqueBuffer const & src_buffer, vk::UniqueBuffer const & dst_buffer, vk::DeviceSize size){
-    auto command_scope = Command_Scope(renderer.device, renderer.command_pool, graphics_queue);
+    auto command_scope = Command_Scope(device, command_pool, graphics_queue);
     command_scope.command_buffer->copyBuffer(
         *src_buffer, 
         *dst_buffer, 
@@ -864,7 +835,30 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   };
 
   //SEt vertex buffers
-  {
+  auto vertex_buffer_handles = std::invoke([&]{
+
+    auto const buffer_size = vk::DeviceSize(sizeof(Vertex) * vertices.size());
+
+    auto host_memory_flag_bits = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
+
+    auto host_buffer_handles = create_buffer(
+        buffer_size, 
+        vk::BufferUsageFlagBits::eTransferSrc, 
+        host_memory_flag_bits
+    );
+
+    auto vertex_buffer_handles = create_buffer(
+        buffer_size,
+        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, 
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    copy_buffer(host_buffer_handles.buffer, vertex_buffer_handles.buffer, buffer_size);
+
+    return vertex_buffer_handles;
+  });
+
+  //Settup index buffer
+  auto index_buffer_handles = std::invoke([&]{
     auto vertices = std::vector{
       Vertex{.position={0,0,0}},
       {.position={1,0,0}},
@@ -888,18 +882,154 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     copy_buffer(host_buffer_handles.buffer, vertex_buffer_handles.buffer, buffer_size);
 
-    renderer.vertex_buffer = std::move(vertex_buffer_handles.buffer);
-    renderer.vertex_buffer_memory = std::move(vertex_buffer_handles.buffer_memory);
+    return vertex_buffer_handles;
+  });
+
+
+  auto const command_buffer_info = vk::CommandBufferAllocateInfo{
+    .commandPool = command_pool.get(),
+    .commandBufferCount =(uint32_t)frame_buffers.size() 
+  };
+  auto command_buffers = device->allocateCommandBuffersUnique(command_buffer_info);
+
+  //Command buffer per fram
+  for(auto i = 0; i < frame_buffers.size(); ++i){
+    auto const & commandBuffer = command_buffers[i];
+    auto const & frameBuffer = frame_buffers[i];
+
+    commandBuffer->begin(vk::CommandBufferBeginInfo());
+
+    auto const clearColor = std::vector{
+        vk::ClearValue {
+          vk::ClearColorValue {
+            std::array{0.0f, 0.0f, 0.0f ,0.0f}
+          }
+        },
+        vk::ClearValue{.depthStencil = {1.0f, 0}}
+    };
+
+    auto const renderArea = vk::Rect2D{
+      {0,0}, 
+      swapchain_extent
+    };
+
+    commandBuffer->beginRenderPass(
+      vk::RenderPassBeginInfo{
+        .renderPass = render_pass.get(), 
+        .framebuffer = frameBuffer.get(), 
+        .renderArea = renderArea, 
+        .clearValueCount = (uint32_t)clearColor.size(),
+        .pClearValues = clearColor.data()
+      }, 
+      vk::SubpassContents::eInline);
+
+    commandBuffer->setViewport(0, default_viewport(swapchain_extent));
+
+    auto const scissor = vk::Rect2D{{0,0}, swapchain_extent};
+    commandBuffer->setScissor(0, scissor);
+
+    commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
+
+    vk::DeviceSize offsets[] = {0};
+    commandBuffer->bindVertexBuffers(0, 1, &vertex_buffer_handles.buffer.get(), offsets);
+    commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
+
+    //commandBuffer->bindDescriptorSets(
+    //  vk::PipelineBindPoint::eGraphics, 
+    //  graphics_pipeline_layout.get(), 
+    //  0, 
+    //  0,
+    //  nullptr, 
+    //  0, 
+    //  nullptr
+    //);
+
+    //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
+    commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    commandBuffer->endRenderPass();
+    commandBuffer->end();
   }
 
-  return std::move(renderer);
+  return Renderer{
+    .instance = std::move(instance),
+    .messenger = std::move(messenger),
+    .physical_device = physical_device,
+    .device = std::move(device),
+    .queue_indices = queue
+    .graphics_pipeline_layout = std::move(graphics_pipeline_layout)
+  };
+
 } catch (std::exception & exception){
   spdlog::critical("Exception:{}", exception.what());
   std::abort();
 }
 
-
-
 void Renderer::draw_frame(){
+  if(device->waitForFences(1, &per_frame_sync[current_frame].in_flight_fence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
+    spdlog::warn("Unable to wait for current frame {}", current_frame);
+  }
+  
+  auto const image_index = device->acquireNextImageKHR(
+          swapchain.get(), 
+          UINT64_MAX, 
+          per_frame_sync[current_frame].image_availableSemaphore.get(), 
+          per_frame_sync[current_frame].in_flight_fence.get());
+  if(image_index.result not_eq vk::Result::eSuccess)
+      throw std::runtime_error("failed to present swapchain image.");
+  
+  //if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
+  //    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
+  //    frameResized = false;
+  //    return;
+  //}
+  
+  if(images_in_flight[image_index.value])
+      if(device->waitForFences(1, &images_in_flight[image_index.value], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess)
+          std::cout << "Unable to wait for image in flight fence: " << imageIndex.value << std::endl;
+  //TODO: instead two different indapendendet sets of fences should exist for sync.
+  images_in_flight[image_index.value] = per_frame_sync[current_frame].in_flight_fence.get();
+  
+  
+  //auto const & buffer_handles = uniform_buffers[image_index.value];
 
+  
+  //update_uniformBuffer(
+  //        device.get(), 
+  //        bufferHandles.first.get(), 
+  //        bufferHandles.second.get(), 
+  //        renderState->swapchainExtent);
+  
+  
+  vk::Semaphore wait_semaphores[] = {per_frame_sync[current_frame].image_available_semaphore.get()};
+  vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+  
+  vk::Semaphore signal_semaphores[] = {per_frame_sync[current_frame].render_finished_semaphore.get()};
+  
+  vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index.value].get()};
+  
+  auto const submit_info = vk::SubmitInfo(
+          1, wait_semaphores, 
+          wait_dst_stage_masks,
+          1, graphics_queue_command_buffers,
+          1, signal_semaphores);
+  
+  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess)
+      std::cout << "Unable to reset fence: " << current_frame << std::endl;
+  
+  if(graphics_queue.submit(1, &submit_info, per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess)
+      std::cerr << "Bad submit" << std::endl;
+  
+  auto const present_info = vk::PresentInfoKHR(
+          1, signal_semaphores, 
+          1, &render_state->swapchain.get(), 
+          &image_index.value);
+  
+  if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
+      std::cerr << "Bad present" << std::endl;
+  }
+  
+  present_queue.wait_idle();
+  
+  current_frame = (current_frame + 1) % max_frames_in_flight;
+  
 }
