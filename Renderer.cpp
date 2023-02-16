@@ -959,7 +959,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
     spdlog::trace("add draw indexed to command buffer {}", i);
-    //commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
 
     spdlog::trace("finnishing up command buffer {}", i);
     commandBuffer->endRenderPass();
@@ -991,7 +991,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     spdlog::info("Creating swapchain image in flight fences");
     auto fences = std::vector<vk::Fence>(swapchain_image_views.size());
     for(auto i =0; i < swapchain_image_views.size(); ++i){
-      fences[i] = device->createFence(vk::FenceCreateInfo{});
+      fences[i] = device->createFence(vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
     }
     return fences;
   });
@@ -1077,7 +1077,7 @@ void Renderer::draw_frame(){
   //    return;
   //}
   //
-  auto & image_in_flight = swapchain_images_in_flight[image_index];
+  auto image_in_flight = swapchain_images_in_flight[image_index];
   
   spdlog::trace("waiting for image in flight fence");
   if(image_in_flight){
