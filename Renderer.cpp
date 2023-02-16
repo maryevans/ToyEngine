@@ -433,42 +433,42 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
 
     auto const color_attachment_ref = vk::AttachmentReference{
-    .attachment = 0, 
-    .layout = vk::ImageLayout::eColorAttachmentOptimal
+      .attachment = 0, 
+      .layout = vk::ImageLayout::eColorAttachmentOptimal
     };
 
 
-    auto const depth_format = std::invoke([&]{
-      //TODO: figure out what formats are needed for depth
-      auto const formats ={
-        vk::Format::eD32Sfloat,
-        vk::Format::eD32SfloatS8Uint,
-        vk::Format::eD24UnormS8Uint
-      };
+    //auto const depth_format = std::invoke([&]{
+    //  //TODO: figure out what formats are needed for depth
+    //  auto const formats ={
+    //    vk::Format::eD32Sfloat,
+    //    vk::Format::eD32SfloatS8Uint,
+    //    vk::Format::eD24UnormS8Uint
+    //  };
 
-      auto const feature = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
+    //  auto const feature = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
 
-      for(auto const & format : formats){
-        auto const props = physical_device.getFormatProperties(format);
-        if((props.optimalTilingFeatures & feature) == feature){
-          return format;
-        }
-      }
+    //  for(auto const & format : formats){
+    //    auto const props = physical_device.getFormatProperties(format);
+    //    if((props.optimalTilingFeatures & feature) == feature){
+    //      return format;
+    //    }
+    //  }
 
-      spdlog::error("Unable to get depth format");
-      std::abort();
-    });
+    //  spdlog::error("Unable to get depth format");
+    //  std::abort();
+    //});
 
-    auto const depth_attachment = vk::AttachmentDescription{
-      .format = depth_format,
-      .samples = vk::SampleCountFlagBits::e1,
-      .loadOp = vk::AttachmentLoadOp::eClear,
-      .storeOp = vk::AttachmentStoreOp::eStore,
-      .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
-      .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
-      .initialLayout = vk::ImageLayout::eUndefined,
-      .finalLayout = vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
-    };
+    //auto const depth_attachment = vk::AttachmentDescription{
+    //  .format = depth_format,
+    //  .samples = vk::SampleCountFlagBits::e1,
+    //  .loadOp = vk::AttachmentLoadOp::eClear,
+    //  .storeOp = vk::AttachmentStoreOp::eStore,
+    //  .stencilLoadOp = vk::AttachmentLoadOp::eDontCare,
+    //  .stencilStoreOp = vk::AttachmentStoreOp::eDontCare,
+    //  .initialLayout = vk::ImageLayout::eUndefined,
+    //  .finalLayout = vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
+    //};
 
     auto const depth_attachment_ref = vk::AttachmentReference{
       .attachment = 1,
@@ -479,7 +479,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
       .colorAttachmentCount = 1,
       .pColorAttachments = & color_attachment_ref,
-      .pDepthStencilAttachment = & depth_attachment_ref,
+      //.pDepthStencilAttachment = & depth_attachment_ref,
     };
 
     auto const subpass_dependency = vk::SubpassDependency{
@@ -496,7 +496,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         | vk::AccessFlagBits::eDepthStencilAttachmentWrite
     };
 
-    auto const attachments = std::array{color_attachment, depth_attachment};
+    auto const attachments = std::array{
+      color_attachment, 
+      //depth_attachment
+    };
     auto const info = vk::RenderPassCreateInfo{
       .flags = {},
       .attachmentCount = attachments.size(),
@@ -937,8 +940,11 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
 
     vk::DeviceSize offsets[] = {0};
-    spdlog::trace("binding vertex and index buffers to command buffer {}", i);
+
+    spdlog::trace("binding vertex buffer to command buffer {}", i);
     commandBuffer->bindVertexBuffers(0, 1, &vertex_buffer_handles.buffer.get(), offsets);
+
+    spdlog::trace("binding index buffer to command buffer {}", i);
     commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
 
     //commandBuffer->bindDescriptorSets(
@@ -952,7 +958,9 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     //);
 
     //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
-    commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    spdlog::trace("add draw indexed to command buffer {}", i);
+    //commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+
     spdlog::trace("finnishing up command buffer {}", i);
     commandBuffer->endRenderPass();
     commandBuffer->end();
