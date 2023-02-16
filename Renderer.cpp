@@ -139,9 +139,9 @@ public:
   }
 
   struct Synchronization{
-    vk::UniqueSemaphore image_available_semaphore;
-    vk::UniqueSemaphore render_finished_semaphore;
-    vk::UniqueFence in_flight_fence;
+    vk::Semaphore image_available_semaphore;
+    vk::Semaphore render_finished_semaphore;
+    vk::Fence in_flight_fence;
   };
 
   vk::UniqueInstance instance;
@@ -966,35 +966,40 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     commandBuffer->end();
   }
 
+  constexpr int max_frames_in_flight = 2;
 
-  auto const create_synchronization = [&](uint32_t max_frames_in_flight){
-    auto per_frame_sync = std::vector<Renderer::Synchronization>(max_frames_in_flight);
-    for(auto && frame_sync: per_frame_sync){
-      frame_sync = Renderer::Synchronization{
-        .image_available_semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{}),
-        .render_finished_semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{}),
-        .in_flight_fence = device->createFenceUnique(vk::FenceCreateInfo{
+  auto const per_frame_sync = std::invoke([&](){
+    spdlog::info("Creating frame synchronization");
+    auto per_frame_sync = std::vector<Renderer::Synchronization>(); 
+    per_frame_sync.reserve(max_frames_in_flight);
+
+    for(auto i =0;i < max_frames_in_flight; ++i){
+     per_frame_sync.push_back(Renderer::Synchronization{
+        .image_available_semaphore = device->createSemaphore(vk::SemaphoreCreateInfo{}),
+
+        .render_finished_semaphore = device->createSemaphore(vk::SemaphoreCreateInfo{}),
+
+        .in_flight_fence = device->createFence(vk::FenceCreateInfo{
           .flags = vk::FenceCreateFlagBits::eSignaled
         })
-      };
+      });
     }
-    return per_frame_sync;
-  };
+    return std::move(per_frame_sync);
+  });
 
-  auto const create_swapchain_images_in_flight_fences = [&]{
-    auto fences = std::vector<vk::Fence>();
-    fences.reserve(swapchain_image_views.size());
+  auto const swapchain_images_in_flight = std::invoke([&]{
+    spdlog::info("Creating swapchain image in flight fences");
+    auto fences = std::vector<vk::Fence>(swapchain_image_views.size());
     for(auto i =0; i < swapchain_image_views.size(); ++i){
       fences[i] = device->createFence(vk::FenceCreateInfo{});
     }
     return fences;
-  };
+  });
 
-  constexpr int max_frames_in_flight = 2;
 
   spdlog::info("Createing Renderer object");
 
-  return Renderer{
+  auto renderer = Renderer{
     .instance = std::move(instance),
     .messenger = std::move(messenger),
     .physical_device = physical_device,
@@ -1026,9 +1031,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     //.texture_sampler = std::move(texture_sampler),
     .swapchain_extent = std::move(swapchain_extent),
     .max_frames_in_flight = max_frames_in_flight,
-    .per_frame_sync = create_synchronization(max_frames_in_flight),
-    .swapchain_images_in_flight = create_swapchain_images_in_flight_fences(),
+    .per_frame_sync = std::move(per_frame_sync),
+    .swapchain_images_in_flight = std::move(swapchain_images_in_flight),
   };
+
+  spdlog::info("returning renderer");
+  return renderer;
 } catch (std::exception & exception){
   spdlog::critical("Exception:{}", exception.what());
   std::abort();
@@ -1041,23 +1049,27 @@ void Renderer::draw_frame(){
      in_flight_fence
   ] = per_frame_sync[current_frame];
 
-  if(device->waitForFences(1, &in_flight_fence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
+  spdlog::info("starting draw frame");
+  if(device->waitForFences(1, &in_flight_fence, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
     spdlog::warn("Unable to wait for current frame {}", current_frame);
   }
   
+  spdlog::trace("aquireing next image");
   auto const next_image_result = device->acquireNextImageKHR(
     swapchain.get(), 
     UINT64_MAX, 
-    image_available_semaphore.get(), 
-    in_flight_fence.get()
+    image_available_semaphore, 
+    in_flight_fence
   );
 
   //TODO: don't crash
   if(next_image_result.result not_eq vk::Result::eSuccess){
-    throw std::runtime_error("failed to present swapchain image.");
+    spdlog::error("failed to present swapchain image.");
+    return;
   }
 
   auto image_index = next_image_result.value;
+  spdlog::trace("got image {}", image_index);
   
   //if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
   //    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
@@ -1067,14 +1079,15 @@ void Renderer::draw_frame(){
   //
   auto & image_in_flight = swapchain_images_in_flight[image_index];
   
+  spdlog::trace("waiting for image in flight fence");
   if(image_in_flight){
-    if(device->waitForFences(1, &image_in_flight, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
-      std::cout << "Unable to wait for image in flight fence: " << image_index << std::endl;
+    if(device->waitForFences(1, &swapchain_images_in_flight[image_index], VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
+      spdlog::error("Unable to wait for image in flight fence: {}", image_index);
     }
   }
 
   //TODO: instead two different indapendendet sets of fences should exist for sync.
-  image_in_flight = *in_flight_fence;
+  image_in_flight = in_flight_fence;
   
   
   //auto const & buffer_handles = uniform_buffers[image_index.value];
@@ -1087,24 +1100,30 @@ void Renderer::draw_frame(){
   //        renderState->swapchainExtent);
   
   
-  vk::Semaphore wait_semaphores[] = {image_available_semaphore.get()};
+  vk::Semaphore wait_semaphores[] = {image_available_semaphore};
   vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-  vk::Semaphore signal_semaphores[] = {render_finished_semaphore.get()};
+  vk::Semaphore signal_semaphores[] = {render_finished_semaphore};
   vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
   auto const submit_info = vk::SubmitInfo{
-    .waitSemaphoreCount = 1, .pWaitSemaphores = wait_semaphores,
+    .waitSemaphoreCount = 1, 
+    .pWaitSemaphores = wait_semaphores,
     .pWaitDstStageMask = wait_dst_stage_masks,
-    .commandBufferCount = 1, .pCommandBuffers = graphics_queue_command_buffers,
-    .signalSemaphoreCount = 1, .pSignalSemaphores = signal_semaphores
+    .commandBufferCount = 1, 
+    .pCommandBuffers = graphics_queue_command_buffers,
+    .signalSemaphoreCount = 1, 
+    .pSignalSemaphores = signal_semaphores
   };
   
-  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess){
+  spdlog::trace("reset fence for current frame");
+  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence) != vk::Result::eSuccess){
     spdlog::warn("Unable to reset fence: {}", current_frame);
   }
   
   auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
 
-  if(graphics_queue.submit(1, &submit_info, in_flight_fence.get()) != vk::Result::eSuccess){
+
+  spdlog::trace("submitting to graphics queue");
+  if(graphics_queue.submit(1, &submit_info, in_flight_fence) != vk::Result::eSuccess){
     spdlog::warn("Bad submit");
   }
   
@@ -1116,6 +1135,7 @@ void Renderer::draw_frame(){
 
   auto present_queue = device->getQueue(queue_indices.present, 0);
   
+  spdlog::trace("presenting on present queue");
   if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
     spdlog::warn("Bad present");
   }

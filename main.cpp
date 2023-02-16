@@ -17,7 +17,8 @@ int main() noexcept{
   for(;not glfwWindowShouldClose(window);){
     glfwPollEvents();
     using namespace std::chrono_literals;
-    std::this_thread::sleep_for(2ms);
+    renderer.draw_frame();
+    std::this_thread::sleep_for(16ms);
   }
   glfwTerminate();
 }
