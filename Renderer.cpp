@@ -52,7 +52,6 @@ void * operator new(std::size_t size){
 
   if(void * ptr = std::malloc(size)){
     total_allocated += size;
-    fmt::print("Allocated bytes {}, total {}\n", size, total_allocated);
     return ptr;
   };
 
@@ -65,7 +64,6 @@ void * operator new[](std::size_t size){
 
   if(void * ptr = std::malloc(size)){
     total_allocated += size;
-    fmt::print("Allocated bytes {}, total {}\n", size, total_allocated);
     return ptr;
   };
 
@@ -76,13 +74,11 @@ void * operator new[](std::size_t size){
 void operator delete(void * ptr, std::size_t size){
   std::free(ptr);
   total_allocated -= size;
-  fmt::print("Deleted {} bytes, total {}\n", size, total_allocated);
 }
 
 void operator delete[](void * ptr, std::size_t size){
   std::free(ptr);
   total_allocated -= size;
-  fmt::print("Deleted {} bytes, total {}\n", size, total_allocated);
 }
 
 constexpr auto default_viewport(vk::Extent2D swapchain_extent){
@@ -135,26 +131,25 @@ struct Command_Scope{
 
 class Renderer{
 public:
-  void draw_frame();
+  inline void draw_frame();
   friend inline auto create_renderer(GLFWwindow * window) noexcept;
 
   inline auto get_viewport()const noexcept{
     return default_viewport(swapchain_extent);
   }
-private:
 
   struct Synchronization{
-    vk::UniqueSemaphore image_availableSemaphore;
-    vk::UniqueSemaphore render_finishedSemaphore;
+    vk::UniqueSemaphore image_available_semaphore;
+    vk::UniqueSemaphore render_finished_semaphore;
     vk::UniqueFence in_flight_fence;
   };
 
   vk::UniqueInstance instance;
   vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> messenger;
   vk::PhysicalDevice physical_device;
+  Queue_Indices queue_indices; 
   vk::UniqueDevice device;
   vk::UniqueSurfaceKHR surface;
-  Queue_Indices queue_indices; 
   vk::UniqueSwapchainKHR swapchain;
   std::vector<vk::UniqueImageView> swapchain_image_views;
   vk::UniqueRenderPass render_pass;
@@ -182,7 +177,7 @@ private:
   uint32_t max_frames_in_flight = 2;
   std::vector<Renderer::Synchronization> per_frame_sync;
   std::vector<vk::Fence> swapchain_images_in_flight;
-  uint32_t current_frame;
+  uint32_t current_frame = 0;
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -191,10 +186,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
 
-    if(messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) spdlog::error("\nvalidation layer: {}\n", pCallbackData->pMessage);
+    if(messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) spdlog::error("validation layer: {}\n", pCallbackData->pMessage);
     if((messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) 
-      spdlog::warn("\nvalidation layer: {}\n", pCallbackData->pMessage);
-    else spdlog::info("\nvalidation layer: {}\n", pCallbackData->pMessage);
+      spdlog::warn("validation layer: {}\n", pCallbackData->pMessage);
+    else spdlog::info("validation layer: {}\n", pCallbackData->pMessage);
 
   return VK_FALSE;
 }
@@ -236,7 +231,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   auto const instanceInfo = vk::InstanceCreateInfo{
     .pApplicationInfo = &appinfo,
-    .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+    .enabledLayerCount = (uint32_t)layers.size(),
     .ppEnabledLayerNames = layers.data(),
     .enabledExtensionCount = (uint32_t) extensions.size(),
     .ppEnabledExtensionNames = extensions.data(),
@@ -254,7 +249,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   };
 
   auto messenger = instance->createDebugUtilsMessengerEXTUnique(messengerInfo, nullptr, vk::DispatchLoaderDynamic(instance.get(), vkGetInstanceProcAddr));
-
 
   auto surface = std::invoke([&]{
       VkSurfaceKHR surface;
@@ -283,7 +277,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       std::abort();
   });
 
-  auto const family_indices = std::invoke([&] noexcept{ 
+  auto const queue_indices = std::invoke([&] noexcept{ 
       struct {
         int graphics_index = -1;
         int present_index = -1;
@@ -314,8 +308,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       std::abort();
   });
 
-  auto const graphics_family_index = family_indices.graphics;
-  auto const present_family_index = family_indices.present;
+  auto const graphics_family_index = queue_indices.graphics;
+  auto const present_family_index = queue_indices.present;
 
   static auto graphicsQueuePriority = 1.0f;
 
@@ -554,10 +548,15 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   auto load_shader_module = [&](std::filesystem::path shader){
     auto file = std::ifstream(shader.string(), std::ios::ate | std::ios::binary);
-    auto const fileSize = (size_t) file.tellg();
-    auto buffer = std::vector<char>(fileSize);
+    auto error = std::error_code();
+    auto const file_size = std::filesystem::file_size(shader, error);
+    if(error){
+      spdlog::critical("Unable to read size of shader file. {}", error.message());
+      std::abort();
+    }
+    auto buffer = std::vector<char>(file_size);
     file.seekg(0);
-    file.read(buffer.data(), fileSize);
+    file.read(buffer.data(), file_size);
 
     auto const shader_info = vk::ShaderModuleCreateInfo{
       .codeSize = buffer.size(),
@@ -569,7 +568,9 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   spdlog::info("Loading shader modules");
   auto vert_shader = load_shader_module("./vert.spv");
+  spdlog::info("Loaded vert shader");
   auto frag_shader = load_shader_module("./frag.spv");
+  spdlog::info("Loaded frag shader");
 
   auto graphics_pipeline = std::invoke([&] {
     spdlog::info("Createing render pipeline");
@@ -735,6 +736,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     return std::move(result.value);
   }); 
 
+  spdlog::info("Setting up frame buffers");
   auto frame_buffers = std::invoke([&]{
     auto frame_buffers = std::vector<vk::UniqueFramebuffer>();
     frame_buffers.reserve(swapchain_image_views.size());
@@ -763,6 +765,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .queueFamilyIndex = static_cast<uint32_t>(graphics_family_index)
   });
 
+  spdlog::info("Setting up descriptor pools");
   auto descriptor_pool = std::invoke([&]{
       auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
         .type = vk::DescriptorType::eUniformBuffer,
@@ -834,7 +837,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         {vk::BufferCopy{.size = size }});
   };
 
-  //SEt vertex buffers
+  spdlog::info("Setting up vertex buffers");
   auto vertex_buffer_handles = std::invoke([&]{
 
     auto const buffer_size = vk::DeviceSize(sizeof(Vertex) * vertices.size());
@@ -857,7 +860,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     return vertex_buffer_handles;
   });
 
-  //Settup index buffer
+  spdlog::info("Settung up index buffers");
   auto index_buffer_handles = std::invoke([&]{
     auto vertices = std::vector{
       Vertex{.position={0,0,0}},
@@ -892,12 +895,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   };
   auto command_buffers = device->allocateCommandBuffersUnique(command_buffer_info);
 
-  //Command buffer per fram
+  spdlog::info("Creating command buffers per fram");
   for(auto i = 0; i < frame_buffers.size(); ++i){
     auto const & commandBuffer = command_buffers[i];
-    auto const & frameBuffer = frame_buffers[i];
+    auto const & frame_buffer = frame_buffers[i];
 
-    commandBuffer->begin(vk::CommandBufferBeginInfo());
+    commandBuffer->begin(vk::CommandBufferBeginInfo{});
 
     auto const clearColor = std::vector{
         vk::ClearValue {
@@ -905,7 +908,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
             std::array{0.0f, 0.0f, 0.0f ,0.0f}
           }
         },
-        vk::ClearValue{.depthStencil = {1.0f, 0}}
+//        vk::ClearValue{.depthStencil = {1.0f, 0}}
     };
 
     auto const renderArea = vk::Rect2D{
@@ -913,24 +916,28 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       swapchain_extent
     };
 
-    commandBuffer->beginRenderPass(
-      vk::RenderPassBeginInfo{
+    auto const render_pass_info = vk::RenderPassBeginInfo{
         .renderPass = render_pass.get(), 
-        .framebuffer = frameBuffer.get(), 
+        .framebuffer = frame_buffer.get(), 
         .renderArea = renderArea, 
         .clearValueCount = (uint32_t)clearColor.size(),
         .pClearValues = clearColor.data()
-      }, 
-      vk::SubpassContents::eInline);
+      };
 
+    spdlog::trace("adding render pass to command buffer {}", i);
+    commandBuffer->beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
+
+    spdlog::trace("setting viewport for command buffer {}", i);
     commandBuffer->setViewport(0, default_viewport(swapchain_extent));
 
+    spdlog::trace("setting scissor for command buffer {}", i);
     auto const scissor = vk::Rect2D{{0,0}, swapchain_extent};
-    commandBuffer->setScissor(0, scissor);
+    commandBuffer->setScissor(0, 1, &scissor);
 
     commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
 
     vk::DeviceSize offsets[] = {0};
+    spdlog::trace("binding vertex and index buffers to command buffer {}", i);
     commandBuffer->bindVertexBuffers(0, 1, &vertex_buffer_handles.buffer.get(), offsets);
     commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
 
@@ -946,48 +953,120 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
     commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    spdlog::trace("finnishing up command buffer {}", i);
     commandBuffer->endRenderPass();
     commandBuffer->end();
   }
+
+
+  auto const create_synchronization = [&](uint32_t max_frames_in_flight){
+    auto per_frame_sync = std::vector<Renderer::Synchronization>(max_frames_in_flight);
+    for(auto && frame_sync: per_frame_sync){
+      frame_sync = Renderer::Synchronization{
+        .image_available_semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{}),
+        .render_finished_semaphore = device->createSemaphoreUnique(vk::SemaphoreCreateInfo{}),
+        .in_flight_fence = device->createFenceUnique(vk::FenceCreateInfo{
+          .flags = vk::FenceCreateFlagBits::eSignaled
+        })
+      };
+    }
+    return per_frame_sync;
+  };
+
+  auto const create_swapchain_images_in_flight_fences = [&]{
+    auto fences = std::vector<vk::Fence>();
+    fences.reserve(swapchain_image_views.size());
+    for(auto i =0; i < swapchain_image_views.size(); ++i){
+      fences[i] = device->createFence(vk::FenceCreateInfo{});
+    }
+    return fences;
+  };
+
+  constexpr int max_frames_in_flight = 2;
+
+  spdlog::info("Createing Renderer object");
 
   return Renderer{
     .instance = std::move(instance),
     .messenger = std::move(messenger),
     .physical_device = physical_device,
+    .queue_indices = queue_indices, 
     .device = std::move(device),
-    .queue_indices = queue
-    .graphics_pipeline_layout = std::move(graphics_pipeline_layout)
+    .surface = std::move(surface),
+    .swapchain = std::move(swapchain),
+    .swapchain_image_views = std::move(swapchain_image_views),
+    .render_pass = std::move(render_pass),
+    .descriptor_set_layout = std::move(descriptor_set_layout),
+    .vert_shader = std::move(vert_shader),
+    .frag_shader = std::move(frag_shader),
+    .graphics_pipeline_layout = std::move(graphics_pipeline_layout),
+    .graphics_pipeline = std::move(graphics_pipeline),
+    //.depth_image_handles = std::move(depth_image_handles),
+    //.depth_buffers = std::move(depth_buffers),
+    .command_pool = std::move(command_pool),
+    //.descriptor_pool = std::move(descriptor_pool),
+    //.descriptor_sets = std::move(descriptor_sets),
+    .command_buffers = std::move(command_buffers),
+    .vertex_buffer = std::move(vertex_buffer_handles.buffer),
+    .vertex_buffer_memory = std::move(vertex_buffer_handles.buffer_memory),
+    .index_buffer = std::move(index_buffer_handles.buffer),
+    .index_buffer_memory = std::move(index_buffer_handles.buffer_memory),
+    //.uniform_buffers = std::move(uniform_buffers),
+    //.image_handles = std::move(image_handles),
+    //.texture_mipmap_levels = std::move(texture_mipmap_levels),
+    //.texture_image_view = std::move(texture_image_view),
+    //.texture_sampler = std::move(texture_sampler),
+    .swapchain_extent = std::move(swapchain_extent),
+    .max_frames_in_flight = max_frames_in_flight,
+    .per_frame_sync = create_synchronization(max_frames_in_flight),
+    .swapchain_images_in_flight = create_swapchain_images_in_flight_fences(),
   };
-
 } catch (std::exception & exception){
   spdlog::critical("Exception:{}", exception.what());
   std::abort();
 }
 
 void Renderer::draw_frame(){
-  if(device->waitForFences(1, &per_frame_sync[current_frame].in_flight_fence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
+  auto const & [
+     image_available_semaphore,
+     render_finished_semaphore,
+     in_flight_fence
+  ] = per_frame_sync[current_frame];
+
+  if(device->waitForFences(1, &in_flight_fence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
     spdlog::warn("Unable to wait for current frame {}", current_frame);
   }
   
-  auto const image_index = device->acquireNextImageKHR(
-          swapchain.get(), 
-          UINT64_MAX, 
-          per_frame_sync[current_frame].image_availableSemaphore.get(), 
-          per_frame_sync[current_frame].in_flight_fence.get());
-  if(image_index.result not_eq vk::Result::eSuccess)
-      throw std::runtime_error("failed to present swapchain image.");
+  auto const next_image_result = device->acquireNextImageKHR(
+    swapchain.get(), 
+    UINT64_MAX, 
+    image_available_semaphore.get(), 
+    in_flight_fence.get()
+  );
+
+  //TODO: don't crash
+  if(next_image_result.result not_eq vk::Result::eSuccess){
+    throw std::runtime_error("failed to present swapchain image.");
+  }
+
+  auto image_index = next_image_result.value;
   
   //if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
   //    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
   //    frameResized = false;
   //    return;
   //}
+  //
+  auto & image_in_flight = swapchain_images_in_flight[image_index];
   
-  if(images_in_flight[image_index.value])
-      if(device->waitForFences(1, &images_in_flight[image_index.value], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess)
-          std::cout << "Unable to wait for image in flight fence: " << imageIndex.value << std::endl;
+  if(image_in_flight){
+    if(device->waitForFences(1, &image_in_flight, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
+      std::cout << "Unable to wait for image in flight fence: " << image_index << std::endl;
+    }
+  }
+
   //TODO: instead two different indapendendet sets of fences should exist for sync.
-  images_in_flight[image_index.value] = per_frame_sync[current_frame].in_flight_fence.get();
+  image_in_flight = *in_flight_fence;
   
   
   //auto const & buffer_handles = uniform_buffers[image_index.value];
@@ -1000,36 +1079,40 @@ void Renderer::draw_frame(){
   //        renderState->swapchainExtent);
   
   
-  vk::Semaphore wait_semaphores[] = {per_frame_sync[current_frame].image_available_semaphore.get()};
+  vk::Semaphore wait_semaphores[] = {image_available_semaphore.get()};
   vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+  vk::Semaphore signal_semaphores[] = {render_finished_semaphore.get()};
+  vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
+  auto const submit_info = vk::SubmitInfo{
+    .waitSemaphoreCount = 1, .pWaitSemaphores = wait_semaphores,
+    .pWaitDstStageMask = wait_dst_stage_masks,
+    .commandBufferCount = 1, .pCommandBuffers = graphics_queue_command_buffers,
+    .signalSemaphoreCount = 1, .pSignalSemaphores = signal_semaphores
+  };
   
-  vk::Semaphore signal_semaphores[] = {per_frame_sync[current_frame].render_finished_semaphore.get()};
-  
-  vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index.value].get()};
-  
-  auto const submit_info = vk::SubmitInfo(
-          1, wait_semaphores, 
-          wait_dst_stage_masks,
-          1, graphics_queue_command_buffers,
-          1, signal_semaphores);
-  
-  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess)
-      std::cout << "Unable to reset fence: " << current_frame << std::endl;
-  
-  if(graphics_queue.submit(1, &submit_info, per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess)
-      std::cerr << "Bad submit" << std::endl;
-  
-  auto const present_info = vk::PresentInfoKHR(
-          1, signal_semaphores, 
-          1, &render_state->swapchain.get(), 
-          &image_index.value);
-  
-  if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
-      std::cerr << "Bad present" << std::endl;
+  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence.get()) != vk::Result::eSuccess){
+    spdlog::warn("Unable to reset fence: {}", current_frame);
   }
   
-  present_queue.wait_idle();
+  auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
+
+  if(graphics_queue.submit(1, &submit_info, in_flight_fence.get()) != vk::Result::eSuccess){
+    spdlog::warn("Bad submit");
+  }
+  
+  auto const present_info = vk::PresentInfoKHR{
+    .waitSemaphoreCount = 1, .pWaitSemaphores = signal_semaphores,
+    .swapchainCount = 1, .pSwapchains = &swapchain.get(),
+    .pImageIndices = &image_index
+  };
+
+  auto present_queue = device->getQueue(queue_indices.present, 0);
+  
+  if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
+    spdlog::warn("Bad present");
+  }
+  
+  present_queue.waitIdle();
   
   current_frame = (current_frame + 1) % max_frames_in_flight;
-  
 }
