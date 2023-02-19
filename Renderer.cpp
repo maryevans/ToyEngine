@@ -41,7 +41,11 @@ auto const indices = std::vector<uint32_t>{
     4, 5, 6, 6, 7, 4
 };
 
-uint64_t total_allocated = 0;
+struct Uniform_Buffer_Object{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+}; 
 
 constexpr auto validation_layer = "VK_LAYER_KHRONOS_validation";
 constexpr auto gfx_reconstruct_layer =  "VK_LAYER_LUNARG_gfxreconstruct";
@@ -58,40 +62,41 @@ constexpr auto default_viewport(vk::Extent2D swapchain_extent){
 
 //Creates an object to submit commands to for the current scope.
 struct Command_Scope{
-    Command_Scope(
-        vk::UniqueDevice const & device, 
-        vk::UniqueCommandPool const & commandPool, 
-        vk::Queue const & graphicsQueue): 
-      device(device),
-      graphic_queue(graphicsQueue) {
+  Command_Scope(
+      vk::UniqueDevice const & device, 
+      vk::UniqueCommandPool const & commandPool, 
+      vk::Queue const & graphicsQueue): 
+    device(device),
+    graphic_queue(graphicsQueue) {
 
-      auto const alloc_info = vk::CommandBufferAllocateInfo{
-        .commandPool = commandPool.get(), 
-        .level = vk::CommandBufferLevel::ePrimary, 
-        .commandBufferCount = 1
+    auto const alloc_info = vk::CommandBufferAllocateInfo{
+      .commandPool = commandPool.get(), 
+      .level = vk::CommandBufferLevel::ePrimary, 
+      .commandBufferCount = 1
+    };
+    command_buffer = std::move(device->allocateCommandBuffersUnique(alloc_info).back());
+
+    command_buffer->begin(vk::CommandBufferBeginInfo{ 
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    });
+  }
+  ~Command_Scope(){
+      command_buffer->end();
+
+      auto const submit_info = vk::SubmitInfo{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer.get()
       };
-      command_buffer = std::move(device->allocateCommandBuffersUnique(alloc_info).back());
 
-      command_buffer->begin(vk::CommandBufferBeginInfo{ 
-          .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-      });
-    }
-    ~Command_Scope(){
-        command_buffer->end();
+      graphic_queue.submit(std::array{submit_info});
+      device->waitIdle();
+  }
 
-        auto const submit_info = vk::SubmitInfo{
-          .commandBufferCount = 1,
-          .pCommandBuffers = &command_buffer.get()
-        };
+  auto & operator ->(){return command_buffer.get();}
 
-        graphic_queue.submit(std::array{submit_info});
-    }
-
-    auto & operator ->(){return command_buffer.get();}
-
-    vk::UniqueDevice const & device;
-    vk::Queue const & graphic_queue;
-    vk::UniqueCommandBuffer command_buffer;
+  vk::UniqueDevice const & device;
+  vk::Queue const & graphic_queue;
+  vk::UniqueCommandBuffer command_buffer;
 };
 
 class Renderer{
@@ -123,6 +128,7 @@ public:
   vk::UniqueShaderModule frag_shader;
   vk::UniquePipelineLayout graphics_pipeline_layout;
   vk::UniquePipeline graphics_pipeline;
+  std::vector<vk::UniqueFramebuffer> frame_buffers;
   Depth_Image_Handles depth_image_handles;
   std::vector<vk::UniqueFramebuffer> depth_buffers;
   vk::UniqueCommandPool command_pool;
@@ -153,14 +159,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 
   if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){
     spdlog::error(pCallbackData->pMessage);
-  }
-  if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT){
+  }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT){
     spdlog::warn(pCallbackData->pMessage);
-  }
-  if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT){
+  }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT){
     spdlog::info(pCallbackData->pMessage);
+  }else{
+    spdlog::trace(pCallbackData->pMessage);
   }
-  spdlog::trace(pCallbackData->pMessage);
   return VK_FALSE;
 }
 
@@ -237,8 +242,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
       return vk::UniqueSurfaceKHR(surface, vk::ObjectDestroy<vk::Instance, vk::DispatchLoaderStatic>(instance.get()));
   });
-
-  instance->destroy();
 
   auto const physical_device = std::invoke([&]{
       //TODO:
@@ -347,11 +350,20 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   }); 
 
   auto swapchain = std::invoke([&]{ 
+      auto const queue_family_indices = std::invoke([&]{
+        auto indices = std::vector<uint32_t>();
+        indices.push_back(graphics_family_index);
+        if(present_family_index not_eq graphics_family_index){
+          indices.push_back(present_family_index);
+        } 
+        return indices;
+      });
+
       auto sharing_mode = std::invoke([&]{
-        if(graphics_family_index not_eq present_family_index){
-          return vk::SharingMode::eExclusive;
-        }else{
+        if(queue_family_indices.size() not_eq 1){
           return vk::SharingMode::eConcurrent;
+        }else{
+          return vk::SharingMode::eExclusive;
         }
       });
 
@@ -364,6 +376,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .imageArrayLayers = 1,
         .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
         .imageSharingMode = sharing_mode,
+        .queueFamilyIndexCount = (uint32_t)queue_family_indices.size(),
+        .pQueueFamilyIndices = queue_family_indices.data(),
         .preTransform = capabilities.currentTransform,
         .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
         .presentMode = present_mode,
@@ -502,7 +516,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
       auto const sampler_binding = vk::DescriptorSetLayoutBinding{
         .binding = 1,
-        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+        .descriptorType = vk::DescriptorType::eSampler,
         .descriptorCount = 1,
         .stageFlags = vk::ShaderStageFlagBits::eFragment,
       };
@@ -748,25 +762,25 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   //spdlog::info("Setting up descriptor pools");
   //auto descriptor_pool = std::invoke([&]{
-  //    auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
-  //      .type = vk::DescriptorType::eUniformBuffer,
-  //      .descriptorCount = (uint32_t)swapchain_image_views.size()
-  //    };
+  //  auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
+  //    .type = vk::DescriptorType::eUniformBuffer,
+  //    .descriptorCount = (uint32_t)swapchain_image_views.size()
+  //  };
 
-  //    auto const texture_sampler_pool_size = vk::DescriptorPoolSize{
-  //      .type = vk::DescriptorType::eCombinedImageSampler,
-  //      .descriptorCount = (uint32_t)swapchain_image_views.size()
-  //    };
+  //  auto const texture_sampler_pool_size = vk::DescriptorPoolSize{
+  //    .type = vk::DescriptorType::eSampler,
+  //    .descriptorCount = (uint32_t)swapchain_image_views.size()
+  //  };
 
-  //    auto const pool_sizes = std::array{uniform_buffer_pool_size, texture_sampler_pool_size};
+  //  auto const pool_sizes = std::array{uniform_buffer_pool_size, texture_sampler_pool_size};
 
-  //    auto const pool_info = vk::DescriptorPoolCreateInfo{
-  //      .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-  //      .poolSizeCount = pool_sizes.size(),
-  //      .pPoolSizes = pool_sizes.data()
-  //    };
+  //  auto const pool_info = vk::DescriptorPoolCreateInfo{
+  //    .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+  //    .poolSizeCount = pool_sizes.size(),
+  //    .pPoolSizes = pool_sizes.data()
+  //  };
 
-  //    return device->createDescriptorPoolUnique(pool_info);
+  //  return device->createDescriptorPoolUnique(pool_info);
   //});
 
   auto const find_memory_type_index = [&](vk::MemoryRequirements requirements, vk::MemoryPropertyFlags memory_flags)->uint32_t{
@@ -776,8 +790,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         return memory_index;
       }
     }
-
-      throw std::runtime_error("Unable to find memory type");
+    throw std::runtime_error("Unable to find memory type");
   };
 
   auto const create_buffer = [&](
@@ -815,6 +828,90 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         *dst_buffer, 
         {vk::BufferCopy{.size = size }});
   };
+  
+  //auto uniform_buffers = std::invoke([&]{
+  //  struct uniform_buffer_handles{
+  //    vk::UniqueBuffer buffer;
+  //    vk::UniqueDeviceMemory memory;
+  //  };
+
+  //  auto uniformBuffers = std::vector<uniform_buffer_handles>(); 
+  //  uniformBuffers.reserve(swapchain_image_views.size());
+
+  //  for(auto i = 0; i < swapchain_image_views.size(); i++){
+  //      auto const buffer_size = vk::DeviceSize(sizeof(Uniform_Buffer_Object));
+
+  //      auto [
+  //        buffer,
+  //        memory
+  //      ] = create_buffer(buffer_size, 
+  //        vk::BufferUsageFlagBits::eUniformBuffer, 
+  //        vk::MemoryPropertyFlagBits::eHostVisible 
+  //        | vk::MemoryPropertyFlagBits::eHostCoherent
+  //      );
+  //      
+  //      uniformBuffers.push_back({std::move(buffer), std::move(memory)});
+  //  }
+
+  //  return uniformBuffers;
+  //});
+
+
+  //auto descriptor_sets = std::invoke([&]{
+
+  //  auto const layouts = std::vector(swapchain_image_views.size(), descriptor_set_layout);
+
+  //  auto info = vk::DescriptorSetAllocateInfo{
+  //    .descriptorPool = descriptor_pool.get(), 
+  //    .descriptorSetCount =1, 
+  //    .pSetLayouts = &descriptor_set_layout.get()
+  //  };
+  //  
+  //  auto descriptorSets = device->allocateDescriptorSetsUnique(info);
+
+  //  for(size_t i =0; i < swapchain_image_views.size(); i++){
+
+  //      auto const uniform_buffer = uniform_buffers[i].buffer.get();
+  //      auto const bufferInfo = vk::DescriptorBufferInfo {
+  //        .buffer = uniform_buffer,
+  //        .offset = 0,
+  //        .range = sizeof(Uniform_Buffer_Object)
+  //      };
+
+  //      auto const uniform_write_decriptor_set = vk::WriteDescriptorSet{
+  //        .descriptorCount = 1,
+  //        .
+  //      };
+
+  //      auto const uniformWriteDescriptorSet = vk::WriteDescriptorSet(
+  //              descriptorSets[i].get(), 
+  //              0, 
+  //              0, 
+  //              vk::DescriptorType::eUniformBuffer, 
+  //              {}, bufferInfo, {});
+
+  //      auto const imageInfo = vk::DescriptorImageInfo(
+  //              textureSampler, 
+  //              textureImageView, 
+  //              vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  //      auto const samplerWriteDescriptorSet = vk::WriteDescriptorSet(
+  //              descriptorSets[i].get(), 
+  //              1, 
+  //              0, 
+  //              vk::DescriptorType::eCombinedImageSampler, 
+  //              imageInfo, {}, {}); 
+
+  //      device.updateDescriptorSets({
+  //                  uniformWriteDescriptorSet,
+  //                  samplerWriteDescriptorSet
+  //              }, {});
+  //  }
+
+  //  return std::move(descriptorSets);
+  //});
+
+
 
   spdlog::info("Setting up vertex buffers");
   auto vertex_buffer_handles = std::invoke([&]{
@@ -852,7 +949,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     auto vertex_buffer_handles = create_buffer(
         buffer_size,
-        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, 
+        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, 
         vk::MemoryPropertyFlagBits::eDeviceLocal);
 
     copy_buffer(host_buffer_handles.buffer, vertex_buffer_handles.buffer, buffer_size);
@@ -870,12 +967,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   spdlog::info("Creating command buffers per fram");
   for(auto i = 0; i < frame_buffers.size(); ++i){
-    auto const & commandBuffer = command_buffers[i];
+    auto const & command_buffer = command_buffers[i];
     auto const & frame_buffer = frame_buffers[i];
 
     device->waitIdle();
 
-    commandBuffer->begin(vk::CommandBufferBeginInfo{});
+    command_buffer->begin(vk::CommandBufferBeginInfo{});
 
     auto const clearColor = std::vector{
         vk::ClearValue {
@@ -900,42 +997,34 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     };
 
     spdlog::trace("adding render pass to command buffer {}", i);
-    commandBuffer->beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
+    command_buffer->beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
 
     spdlog::trace("setting viewport for command buffer {}", i);
-    commandBuffer->setViewport(0, default_viewport(swapchain_extent));
+    command_buffer->setViewport(0, default_viewport(swapchain_extent));
 
     spdlog::trace("setting scissor for command buffer {}", i);
     auto const scissor = vk::Rect2D{{0,0}, swapchain_extent};
-    commandBuffer->setScissor(0, 1, &scissor);
+    command_buffer->setScissor(0, 1, &scissor);
 
-    commandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
+    command_buffer->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
 
     vk::DeviceSize offsets[] = {0};
 
     spdlog::trace("binding vertex buffer to command buffer {}", i);
     auto vertex_buffers = std::array{vertex_buffer_handles.buffer.get()};
-    commandBuffer->bindVertexBuffers(0, vertex_buffers, offsets);
+    command_buffer->bindVertexBuffers(0, vertex_buffers, offsets);
     spdlog::trace("binding index buffer to command buffer {}", i);
-    commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
+    command_buffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
 
-    //commandBuffer->bindDescriptorSets(
-    //  vk::PipelineBindPoint::eGraphics, 
-    //  graphics_pipeline_layout.get(), 
-    //  0, 
-    //  0,
-    //  nullptr, 
-    //  0, 
-    //  nullptr
-    //);
+    //commandBuffer->bindDescriptorSets( vk::PipelineBindPoint::eGraphics, graphics_pipeline_layout.get(), 0, 0, nullptr, 0, nullptr);
 
-    //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
+    command_buffer->draw((uint32_t)vertices.size(),1,0,0);
     spdlog::trace("add draw indexed to command buffer {}", i);
-    //commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    command_buffer->drawIndexed(indices.size(), 1, 0, 0, 0);
 
     spdlog::trace("finnishing up command buffer {}", i);
-    commandBuffer->endRenderPass();
-    commandBuffer->end();
+    command_buffer->endRenderPass();
+    command_buffer->end();
   }
 
   constexpr int max_frames_in_flight = 2;
@@ -951,9 +1040,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
         .render_finished_semaphore = device->createSemaphore(vk::SemaphoreCreateInfo{}),
 
-        .in_flight_fence = device->createFence(vk::FenceCreateInfo{
-          .flags = vk::FenceCreateFlagBits::eSignaled
-        })
+        .in_flight_fence = device->createFence(vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled}), 
       });
     }
     return std::move(per_frame_sync);
@@ -981,11 +1068,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     .swapchain = std::move(swapchain),
     .swapchain_image_views = std::move(swapchain_image_views),
     .render_pass = std::move(render_pass),
-    //.descriptor_set_layout = std::move(descriptor_set_layout),
+    .descriptor_set_layout = std::move(descriptor_set_layout),
     .vert_shader = std::move(vert_shader),
     .frag_shader = std::move(frag_shader),
     .graphics_pipeline_layout = std::move(graphics_pipeline_layout),
     .graphics_pipeline = std::move(graphics_pipeline),
+    .frame_buffers = std::move(frame_buffers),
     //.depth_image_handles = std::move(depth_image_handles),
     //.depth_buffers = std::move(depth_buffers),
     .command_pool = std::move(command_pool),
@@ -1015,104 +1103,107 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 }
 
 void Renderer::draw_frame(){
-  //auto const & [
-  //   image_available_semaphore,
-  //   render_finished_semaphore,
-  //   in_flight_fence
-  //] = per_frame_sync[current_frame];
+  auto & [
+     image_available_semaphore,
+     render_finished_semaphore,
+     in_flight_fence
+  ] = per_frame_sync[current_frame];
 
-  //spdlog::info("starting draw frame");
-  //if(device->waitForFences(1, &in_flight_fence, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
-  //  spdlog::warn("Unable to wait for current frame {}", current_frame);
+  spdlog::info("starting draw frame");
+  if(device->waitForFences(1, &in_flight_fence, VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
+    spdlog::warn("Unable to wait for current frame {}", current_frame);
+  }
+
+  if(in_flight_fence){
+    device->destroyFence(in_flight_fence);
+  }
+
+  in_flight_fence = device->createFence(vk::FenceCreateInfo{});
+
+  spdlog::trace("aquireing next image");
+  auto const next_image_result = device->acquireNextImageKHR(
+    swapchain.get(), 
+    UINT64_MAX, 
+    image_available_semaphore, 
+    in_flight_fence
+  );
+
+  //TODO: don't crash
+  if(next_image_result.result not_eq vk::Result::eSuccess){
+    spdlog::error("failed to present swapchain image.");
+    return;
+  }
+
+  auto image_index = next_image_result.value;
+  spdlog::trace("got image {}", image_index);
+  
+  //if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
+  //    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
+  //    frameResized = false;
+  //    return;
   //}
   //
-  //spdlog::trace("aquireing next image");
-  //auto const next_image_result = device->acquireNextImageKHR(
-  //  swapchain.get(), 
-  //  UINT64_MAX, 
-  //  image_available_semaphore, 
-  //  in_flight_fence
-  //);
+  auto image_in_flight = swapchain_images_in_flight[image_index];
+  
+  spdlog::trace("waiting for image in flight fence");
+  if(device->waitForFences(1, &image_in_flight, VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
+    spdlog::error("Unable to wait for image in flight fence: {}", image_index);
+  }
 
-  ////TODO: don't crash
-  //if(next_image_result.result not_eq vk::Result::eSuccess){
-  //  spdlog::error("failed to present swapchain image.");
-  //  return;
-  //}
+  image_in_flight = in_flight_fence;
+  
+  
+  //auto const & buffer_handles = uniform_buffers[image_index.value];
 
-  //auto image_index = next_image_result.value;
-  //spdlog::trace("got image {}", image_index);
-  //
-  ////if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
-  ////    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
-  ////    frameResized = false;
-  ////    return;
-  ////}
-  ////
-  //auto image_in_flight = swapchain_images_in_flight[image_index];
-  //
-  //spdlog::trace("waiting for image in flight fence");
-  //if(image_in_flight){
-  //  if(device->waitForFences(1, &swapchain_images_in_flight[image_index], VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
-  //    spdlog::error("Unable to wait for image in flight fence: {}", image_index);
-  //  }
-  //}
+  
+  //update_uniformBuffer(
+  //        device.get(), 
+  //        bufferHandles.first.get(), 
+  //        bufferHandles.second.get(), 
+  //        renderState->swapchainExtent);
+  
+  
+  vk::Semaphore wait_semaphores[] = {image_available_semaphore};
+  vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+  vk::Semaphore signal_semaphores[] = {render_finished_semaphore};
+  vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
+  auto const submit_info = vk::SubmitInfo{
+    .waitSemaphoreCount = 1, 
+    .pWaitSemaphores = wait_semaphores,
+    .pWaitDstStageMask = wait_dst_stage_masks,
+    .commandBufferCount = 1, 
+    .pCommandBuffers = graphics_queue_command_buffers,
+    .signalSemaphoreCount = 1, 
+    .pSignalSemaphores = signal_semaphores
+  };
+  
+  spdlog::trace("reset fence for current frame");
 
-  ////TODO: instead two different indapendendet sets of fences should exist for sync.
-  //image_in_flight = in_flight_fence;
-  //
-  //
-  ////auto const & buffer_handles = uniform_buffers[image_index.value];
+  if(device->resetFences(1, &in_flight_fence) != vk::Result::eSuccess){
+    spdlog::warn("Unable to reset fence: {}", current_frame);
+  }
+  
+  auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
 
-  //
-  ////update_uniformBuffer(
-  ////        device.get(), 
-  ////        bufferHandles.first.get(), 
-  ////        bufferHandles.second.get(), 
-  ////        renderState->swapchainExtent);
-  //
-  //
-  //vk::Semaphore wait_semaphores[] = {image_available_semaphore};
-  //vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-  //vk::Semaphore signal_semaphores[] = {render_finished_semaphore};
-  //vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
-  //auto const submit_info = vk::SubmitInfo{
-  //  .waitSemaphoreCount = 1, 
-  //  .pWaitSemaphores = wait_semaphores,
-  //  .pWaitDstStageMask = wait_dst_stage_masks,
-  //  .commandBufferCount = 1, 
-  //  .pCommandBuffers = graphics_queue_command_buffers,
-  //  .signalSemaphoreCount = 1, 
-  //  .pSignalSemaphores = signal_semaphores
-  //};
-  //
-  //spdlog::trace("reset fence for current frame");
-  //if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence) != vk::Result::eSuccess){
-  //  spdlog::warn("Unable to reset fence: {}", current_frame);
-  //}
-  //
-  //auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
+  spdlog::trace("submitting to graphics queue");
+  if(graphics_queue.submit(1, &submit_info, in_flight_fence) != vk::Result::eSuccess){
+    spdlog::warn("Bad submit");
+  }
+  
+  auto const present_info = vk::PresentInfoKHR{
+    .waitSemaphoreCount = 1, .pWaitSemaphores = signal_semaphores,
+    .swapchainCount = 1, .pSwapchains = &swapchain.get(),
+    .pImageIndices = &image_index
+  };
 
-
-  //spdlog::trace("submitting to graphics queue");
-  //if(graphics_queue.submit(1, &submit_info, in_flight_fence) != vk::Result::eSuccess){
-  //  spdlog::warn("Bad submit");
-  //}
-  //
-  //auto const present_info = vk::PresentInfoKHR{
-  //  .waitSemaphoreCount = 1, .pWaitSemaphores = signal_semaphores,
-  //  .swapchainCount = 1, .pSwapchains = &swapchain.get(),
-  //  .pImageIndices = &image_index
-  //};
-
-  //auto present_queue = device->getQueue(queue_indices.present, 0);
-  //
-  //spdlog::trace("presenting on present queue");
-  //if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
-  //  spdlog::warn("Bad present");
-  //}
-  //
-  //present_queue.waitIdle();
-  //
-  //current_frame = (current_frame + 1) % max_frames_in_flight;
+  auto present_queue = device->getQueue(queue_indices.present, 0);
+  
+  spdlog::trace("presenting on present queue");
+  if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
+    spdlog::warn("Bad present");
+  }
+  
+  present_queue.waitIdle();
+  
+  current_frame = (current_frame + 1) % max_frames_in_flight;
 }
