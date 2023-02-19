@@ -18,37 +18,38 @@ struct Image_Handles{
 };
 
 struct Vertex{
-    glm::vec3 position;
-    glm::vec3 color;
-    glm::vec2 tex_coord;
+  glm::vec3 position;
+  glm::vec3 color;
+  glm::vec2 tex_coord;
 };
 
 //Cube
 auto const vertices = std::vector<Vertex>{
-    {{0,    0.5,    0.0},     {1,0,1},    {1, 0}},
-    {{-0.5, 0,      0.0},     {0,1,0},    {0, 0}},
-    {{0.5,  0,      0.0},     {1,0,1},    {0, 1}},
-    {{1,    1,      0.0},     {1,1,0},    {1, 1}},
+  {{0,    0.5,    0.0},     {1,0,1},    {1, 0}},
+  {{-0.5, 0,      0.0},     {0,1,0},    {0, 0}},
+  {{0.5,  0,      0.0},     {1,0,1},    {0, 1}},
+  {{1,    1,      0.0},     {1,1,0},    {1, 1}},
 
-    {{0,    0.5,    -0.5},     {1,0,1},    {1, 0}},
-    {{-0.5, 0,      -0.5},     {0,1,0},    {0, 0}},
-    {{0.5,  0,      -0.5},     {1,0,1},    {0, 1}},
-    {{1,    1,      -0.5},     {1,1,0},    {1, 1}},
+  {{0,    0.5,    -0.5},     {1,0,1},    {1, 0}},
+  {{-0.5, 0,      -0.5},     {0,1,0},    {0, 0}},
+  {{0.5,  0,      -0.5},     {1,0,1},    {0, 1}},
+  {{1,    1,      -0.5},     {1,1,0},    {1, 1}},
 };
 
 auto const indices = std::vector<uint32_t>{
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
+  0, 1, 2, 2, 3, 0,
+  4, 5, 6, 6, 7, 4
 };
 
 struct Uniform_Buffer_Object{
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+  glm::mat4 model;
+  glm::mat4 view;
+  glm::mat4 proj;
 }; 
 
 constexpr auto validation_layer = "VK_LAYER_KHRONOS_validation";
 constexpr auto gfx_reconstruct_layer =  "VK_LAYER_LUNARG_gfxreconstruct";
+constexpr auto bla = "VK_LAYER_LUNARG_api_dump";
 
 constexpr auto default_viewport(vk::Extent2D swapchain_extent){
   return vk::Viewport{
@@ -199,7 +200,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   const char * requested_layers[] = {
     gfx_reconstruct_layer, 
-    validation_layer
+    validation_layer,
   };
 
   for(auto const & layer : vk::enumerateInstanceLayerProperties()){
@@ -516,7 +517,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
       auto const sampler_binding = vk::DescriptorSetLayoutBinding{
         .binding = 1,
-        .descriptorType = vk::DescriptorType::eSampler,
+        .descriptorType = vk::DescriptorType::eCombinedImageSampler,
         .descriptorCount = 1,
         .stageFlags = vk::ShaderStageFlagBits::eFragment,
       };
@@ -698,7 +699,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     auto const depth_stencil = vk::PipelineDepthStencilStateCreateInfo{
       .depthTestEnable = VK_TRUE,
       .depthWriteEnable = VK_TRUE,
-      .depthCompareOp = vk::CompareOp::eLess,
+      .depthCompareOp = vk::CompareOp::eLessOrEqual,
       .depthBoundsTestEnable = VK_FALSE,
       .stencilTestEnable = VK_FALSE,
       .minDepthBounds = 0.0f,
@@ -924,6 +925,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
     );
 
+    auto memory = device->mapMemory(host_buffer_handles.buffer_memory.get(), 0, buffer_size, {});
+    std::memcpy(memory, vertices.data(), buffer_size);
+    device->unmapMemory(host_buffer_handles.buffer_memory.get());
+
     auto vertex_buffer_handles = create_buffer(
       buffer_size,
       vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, 
@@ -946,6 +951,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         vk::BufferUsageFlagBits::eTransferSrc, 
         host_memory_flag_bits
     );
+
+    auto memory = device->mapMemory(host_buffer_handles.buffer_memory.get(), 0, buffer_size, {});
+    std::memcpy(memory, vertices.data(), indices.size());
+    device->unmapMemory(host_buffer_handles.buffer_memory.get());
 
     auto vertex_buffer_handles = create_buffer(
         buffer_size,
@@ -1012,7 +1021,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     spdlog::trace("binding vertex buffer to command buffer {}", i);
     auto vertex_buffers = std::array{vertex_buffer_handles.buffer.get()};
-    command_buffer->bindVertexBuffers(0, vertex_buffers, offsets);
+    command_buffer->bindVertexBuffers(0, vertex_buffers.size(), vertex_buffers.data(), offsets);
+
     spdlog::trace("binding index buffer to command buffer {}", i);
     command_buffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
 
@@ -1128,10 +1138,9 @@ void Renderer::draw_frame(){
     in_flight_fence
   );
 
-  //TODO: don't crash
   if(next_image_result.result not_eq vk::Result::eSuccess){
     spdlog::error("failed to present swapchain image.");
-    return;
+    std::abort();
   }
 
   auto image_index = next_image_result.value;

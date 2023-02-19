@@ -4,7 +4,7 @@ project(ToyEngine CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 set(CMAKE_BUILD_TYPE=DEBUG)
-set(CMAKE_CXX_FLAGS "-fsanitize=address")
+#set(CMAKE_CXX_FLAGS "-fsanitize=address")
 
 find_package(Vulkan REQUIRED FATAL_ERROR)
 

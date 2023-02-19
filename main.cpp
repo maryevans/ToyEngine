@@ -14,11 +14,12 @@ int main() noexcept{
   auto renderer = create_renderer(window); 
   spdlog::info("Created renderer {}",1);
 
+  renderer.draw_frame();
+
   for(;not glfwWindowShouldClose(window);){
     glfwPollEvents();
     using namespace std::chrono_literals;
-    renderer.draw_frame();
-    std::this_thread::sleep_for(2000ms);
+    std::this_thread::sleep_for(33ms);
   }
   glfwTerminate();
 }
