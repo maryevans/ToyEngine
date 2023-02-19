@@ -110,7 +110,7 @@ public:
   };
 
   vk::UniqueInstance instance;
-  vk::UniqueHandle<vk::DebugUtilsMessengerEXT, vk::DispatchLoaderDynamic> messenger;
+  vk::DebugUtilsMessengerEXT messenger;
   vk::PhysicalDevice physical_device;
   Queue_Indices queue_indices; 
   vk::UniqueDevice device;
@@ -151,11 +151,16 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
 
-    if(messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) spdlog::error("validation layer: {}\n", pCallbackData->pMessage);
-    if((messageSeverity & VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VkDebugUtilsMessageSeverityFlagBitsEXT::VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) 
-      spdlog::warn("validation layer: {}\n", pCallbackData->pMessage);
-    else spdlog::info("validation layer: {}\n", pCallbackData->pMessage);
-
+  if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){
+    spdlog::error(pCallbackData->pMessage);
+  }
+  if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT){
+    spdlog::warn(pCallbackData->pMessage);
+  }
+  if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT){
+    spdlog::info(pCallbackData->pMessage);
+  }
+  spdlog::trace(pCallbackData->pMessage);
   return VK_FALSE;
 }
 
@@ -213,15 +218,15 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   auto instance = vk::createInstanceUnique(instance_info);
 
   auto const messengerInfo = vk::DebugUtilsMessengerCreateInfoEXT{
-    .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
-    .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral 
-      | vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral
-      | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
+    .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose
+      | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
+      | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning,
+    .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
     .pfnUserCallback = debugCallback,
     .pUserData = nullptr
   };
 
-  auto messenger = instance->createDebugUtilsMessengerEXTUnique(messengerInfo, nullptr, vk::DispatchLoaderDynamic(instance.get(), vkGetInstanceProcAddr));
+  auto messenger = instance->createDebugUtilsMessengerEXT(messengerInfo, nullptr, vk::DispatchLoaderDynamic(instance.get(), vkGetInstanceProcAddr));
 
   auto surface = std::invoke([&]{
       VkSurfaceKHR surface;
@@ -232,6 +237,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
       return vk::UniqueSurfaceKHR(surface, vk::ObjectDestroy<vk::Instance, vk::DispatchLoaderStatic>(instance.get()));
   });
+
+  instance->destroy();
 
   auto const physical_device = std::invoke([&]{
       //TODO:
@@ -316,7 +323,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   auto const image_count = capabilities.minImageCount + 1;
 
-  auto const image_format = surface_format.format;
   auto swapchain_extent = std::invoke([&]{
       if(capabilities.currentExtent.width not_eq UINT32_MAX)
         return capabilities.currentExtent;
@@ -352,7 +358,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       auto info = vk::SwapchainCreateInfoKHR{
         .surface = surface.get(),
         .minImageCount = image_count,
-        .imageFormat = image_format,
+        .imageFormat = surface_format.format,
         .imageColorSpace = surface_format.colorSpace,
         .imageExtent = swapchain_extent,
         .imageArrayLayers = 1,
@@ -389,7 +395,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       for(auto i = 0; i < images.size(); ++i){
         image_views[i] = create_image_view(device.get(), images[i], surface_format.format, vk::ImageAspectFlagBits::eColor, 1);
       } 
-      return image_views;
+      return std::move(image_views);
   });
 
   auto render_pass = std::invoke([&] noexcept {
@@ -890,7 +896,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .framebuffer = frame_buffer.get(), 
       .renderArea = renderArea, 
       .clearValueCount = (uint32_t)clearColor.size(),
-      .pClearValues = clearColor.data()
+      .pClearValues = clearColor.data(),
     };
 
     spdlog::trace("adding render pass to command buffer {}", i);
@@ -910,7 +916,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     spdlog::trace("binding vertex buffer to command buffer {}", i);
     auto vertex_buffers = std::array{vertex_buffer_handles.buffer.get()};
     commandBuffer->bindVertexBuffers(0, vertex_buffers, offsets);
-
     spdlog::trace("binding index buffer to command buffer {}", i);
     commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
 
@@ -924,7 +929,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     //  nullptr
     //);
 
-    commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
+    //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
     spdlog::trace("add draw indexed to command buffer {}", i);
     //commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
 
@@ -1010,104 +1015,104 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 }
 
 void Renderer::draw_frame(){
-  auto const & [
-     image_available_semaphore,
-     render_finished_semaphore,
-     in_flight_fence
-  ] = per_frame_sync[current_frame];
+  //auto const & [
+  //   image_available_semaphore,
+  //   render_finished_semaphore,
+  //   in_flight_fence
+  //] = per_frame_sync[current_frame];
 
-  spdlog::info("starting draw frame");
-  if(device->waitForFences(1, &in_flight_fence, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
-    spdlog::warn("Unable to wait for current frame {}", current_frame);
-  }
-  
-  spdlog::trace("aquireing next image");
-  auto const next_image_result = device->acquireNextImageKHR(
-    swapchain.get(), 
-    UINT64_MAX, 
-    image_available_semaphore, 
-    in_flight_fence
-  );
-
-  //TODO: don't crash
-  if(next_image_result.result not_eq vk::Result::eSuccess){
-    spdlog::error("failed to present swapchain image.");
-    return;
-  }
-
-  auto image_index = next_image_result.value;
-  spdlog::trace("got image {}", image_index);
-  
-  //if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
-  //    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
-  //    frameResized = false;
-  //    return;
+  //spdlog::info("starting draw frame");
+  //if(device->waitForFences(1, &in_flight_fence, VK_TRUE, UINT64_MAX) != vk::Result::eSuccess){
+  //  spdlog::warn("Unable to wait for current frame {}", current_frame);
   //}
   //
-  auto image_in_flight = swapchain_images_in_flight[image_index];
-  
-  spdlog::trace("waiting for image in flight fence");
-  if(image_in_flight){
-    if(device->waitForFences(1, &swapchain_images_in_flight[image_index], VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
-      spdlog::error("Unable to wait for image in flight fence: {}", image_index);
-    }
-  }
+  //spdlog::trace("aquireing next image");
+  //auto const next_image_result = device->acquireNextImageKHR(
+  //  swapchain.get(), 
+  //  UINT64_MAX, 
+  //  image_available_semaphore, 
+  //  in_flight_fence
+  //);
 
-  //TODO: instead two different indapendendet sets of fences should exist for sync.
-  image_in_flight = in_flight_fence;
-  
-  
-  //auto const & buffer_handles = uniform_buffers[image_index.value];
+  ////TODO: don't crash
+  //if(next_image_result.result not_eq vk::Result::eSuccess){
+  //  spdlog::error("failed to present swapchain image.");
+  //  return;
+  //}
 
-  
-  //update_uniformBuffer(
-  //        device.get(), 
-  //        bufferHandles.first.get(), 
-  //        bufferHandles.second.get(), 
-  //        renderState->swapchainExtent);
-  
-  
-  vk::Semaphore wait_semaphores[] = {image_available_semaphore};
-  vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
-  vk::Semaphore signal_semaphores[] = {render_finished_semaphore};
-  vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
-  auto const submit_info = vk::SubmitInfo{
-    .waitSemaphoreCount = 1, 
-    .pWaitSemaphores = wait_semaphores,
-    .pWaitDstStageMask = wait_dst_stage_masks,
-    .commandBufferCount = 1, 
-    .pCommandBuffers = graphics_queue_command_buffers,
-    .signalSemaphoreCount = 1, 
-    .pSignalSemaphores = signal_semaphores
-  };
-  
-  spdlog::trace("reset fence for current frame");
-  if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence) != vk::Result::eSuccess){
-    spdlog::warn("Unable to reset fence: {}", current_frame);
-  }
-  
-  auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
+  //auto image_index = next_image_result.value;
+  //spdlog::trace("got image {}", image_index);
+  //
+  ////if(imageIndex.result == vk::Result::eErrorOutOfDateKHR or imageIndex.result == vk::Result::eSuboptimalKHR or frameResized){
+  ////    renderState = createVulkanRenderState(device, gpu, surface, window, graphicsIndex, presentIndex);
+  ////    frameResized = false;
+  ////    return;
+  ////}
+  ////
+  //auto image_in_flight = swapchain_images_in_flight[image_index];
+  //
+  //spdlog::trace("waiting for image in flight fence");
+  //if(image_in_flight){
+  //  if(device->waitForFences(1, &swapchain_images_in_flight[image_index], VK_TRUE, UINT64_MAX) not_eq vk::Result::eSuccess){
+  //    spdlog::error("Unable to wait for image in flight fence: {}", image_index);
+  //  }
+  //}
+
+  ////TODO: instead two different indapendendet sets of fences should exist for sync.
+  //image_in_flight = in_flight_fence;
+  //
+  //
+  ////auto const & buffer_handles = uniform_buffers[image_index.value];
+
+  //
+  ////update_uniformBuffer(
+  ////        device.get(), 
+  ////        bufferHandles.first.get(), 
+  ////        bufferHandles.second.get(), 
+  ////        renderState->swapchainExtent);
+  //
+  //
+  //vk::Semaphore wait_semaphores[] = {image_available_semaphore};
+  //vk::PipelineStageFlags wait_dst_stage_masks[] = {vk::PipelineStageFlagBits::eColorAttachmentOutput};
+  //vk::Semaphore signal_semaphores[] = {render_finished_semaphore};
+  //vk::CommandBuffer graphics_queue_command_buffers[] = {command_buffers[image_index].get()};
+  //auto const submit_info = vk::SubmitInfo{
+  //  .waitSemaphoreCount = 1, 
+  //  .pWaitSemaphores = wait_semaphores,
+  //  .pWaitDstStageMask = wait_dst_stage_masks,
+  //  .commandBufferCount = 1, 
+  //  .pCommandBuffers = graphics_queue_command_buffers,
+  //  .signalSemaphoreCount = 1, 
+  //  .pSignalSemaphores = signal_semaphores
+  //};
+  //
+  //spdlog::trace("reset fence for current frame");
+  //if(device->resetFences(1, &per_frame_sync[current_frame].in_flight_fence) != vk::Result::eSuccess){
+  //  spdlog::warn("Unable to reset fence: {}", current_frame);
+  //}
+  //
+  //auto graphics_queue = device->getQueue(queue_indices.graphics, 0);
 
 
-  spdlog::trace("submitting to graphics queue");
-  if(graphics_queue.submit(1, &submit_info, in_flight_fence) != vk::Result::eSuccess){
-    spdlog::warn("Bad submit");
-  }
-  
-  auto const present_info = vk::PresentInfoKHR{
-    .waitSemaphoreCount = 1, .pWaitSemaphores = signal_semaphores,
-    .swapchainCount = 1, .pSwapchains = &swapchain.get(),
-    .pImageIndices = &image_index
-  };
+  //spdlog::trace("submitting to graphics queue");
+  //if(graphics_queue.submit(1, &submit_info, in_flight_fence) != vk::Result::eSuccess){
+  //  spdlog::warn("Bad submit");
+  //}
+  //
+  //auto const present_info = vk::PresentInfoKHR{
+  //  .waitSemaphoreCount = 1, .pWaitSemaphores = signal_semaphores,
+  //  .swapchainCount = 1, .pSwapchains = &swapchain.get(),
+  //  .pImageIndices = &image_index
+  //};
 
-  auto present_queue = device->getQueue(queue_indices.present, 0);
-  
-  spdlog::trace("presenting on present queue");
-  if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
-    spdlog::warn("Bad present");
-  }
-  
-  present_queue.waitIdle();
-  
-  current_frame = (current_frame + 1) % max_frames_in_flight;
+  //auto present_queue = device->getQueue(queue_indices.present, 0);
+  //
+  //spdlog::trace("presenting on present queue");
+  //if(present_queue.presentKHR(present_info) != vk::Result::eSuccess){
+  //  spdlog::warn("Bad present");
+  //}
+  //
+  //present_queue.waitIdle();
+  //
+  //current_frame = (current_frame + 1) % max_frames_in_flight;
 }
