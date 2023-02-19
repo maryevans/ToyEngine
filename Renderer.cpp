@@ -1,7 +1,6 @@
 #pragma once
 #include "include.hpp"
 
-
 struct Queue_Indices{
   uint32_t graphics;
   uint32_t present;
@@ -45,41 +44,7 @@ auto const indices = std::vector<uint32_t>{
 uint64_t total_allocated = 0;
 
 constexpr auto validation_layer = "VK_LAYER_KHRONOS_validation";
-
-void * operator new(std::size_t size){
-
-  if(size == 0) ++size;
-
-  if(void * ptr = std::malloc(size)){
-    total_allocated += size;
-    return ptr;
-  };
-
-  spdlog::critical("Bad alloc");
-  std::abort();
-}
-
-void * operator new[](std::size_t size){
-  if(size == 0) ++size;
-
-  if(void * ptr = std::malloc(size)){
-    total_allocated += size;
-    return ptr;
-  };
-
-  spdlog::critical("Bad alloc");
-  std::abort();
-}
-
-void operator delete(void * ptr, std::size_t size){
-  std::free(ptr);
-  total_allocated -= size;
-}
-
-void operator delete[](void * ptr, std::size_t size){
-  std::free(ptr);
-  total_allocated -= size;
-}
+constexpr auto gfx_reconstruct_layer =  "VK_LAYER_LUNARG_gfxreconstruct";
 
 constexpr auto default_viewport(vk::Extent2D swapchain_extent){
   return vk::Viewport{
@@ -134,7 +99,7 @@ public:
   inline void draw_frame();
   friend inline auto create_renderer(GLFWwindow * window) noexcept;
 
-  inline auto get_viewport()const noexcept{
+  inline auto get_viewport() const noexcept{
     return default_viewport(swapchain_extent);
   }
 
@@ -222,14 +187,22 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     return extensions;
   });
 
+  const char * requested_layers[] = {
+    gfx_reconstruct_layer, 
+    validation_layer
+  };
+
   for(auto const & layer : vk::enumerateInstanceLayerProperties()){
-    if(std::string_view(layer.layerName) == std::string_view(validation_layer)){
-      spdlog::info("Found validation layer");
-      layers.push_back(validation_layer);
+    auto const layer_name = std::string_view(layer.layerName);
+    for(auto const & requested_layer : requested_layers){
+      if(layer_name == requested_layer){
+        spdlog::info("Found layer {}", requested_layer);
+        layers.push_back(requested_layer);
+      }
     }
   }
 
-  auto const instanceInfo = vk::InstanceCreateInfo{
+  auto const instance_info = vk::InstanceCreateInfo{
     .pApplicationInfo = &appinfo,
     .enabledLayerCount = (uint32_t)layers.size(),
     .ppEnabledLayerNames = layers.data(),
@@ -237,7 +210,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     .ppEnabledExtensionNames = extensions.data(),
   };
 
-  auto instance = vk::createInstanceUnique(instanceInfo);
+  auto instance = vk::createInstanceUnique(instance_info);
 
   auto const messengerInfo = vk::DebugUtilsMessengerCreateInfoEXT{
     .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
@@ -333,7 +306,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
         .ppEnabledExtensionNames = device_extensions.data()
       });
 
-  auto const graphicsQueue = device->getQueue(graphics_family_index, 0);
+  auto const graphics_queue = device->getQueue(graphics_family_index, 0);
 
   auto const capabilities = physical_device.getSurfaceCapabilitiesKHR(surface.get());
   //TODO: pcik a better format
@@ -437,7 +410,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
       .layout = vk::ImageLayout::eColorAttachmentOptimal
     };
 
-
     //auto const depth_format = std::invoke([&]{
     //  //TODO: figure out what formats are needed for depth
     //  auto const formats ={
@@ -470,10 +442,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     //  .finalLayout = vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
     //};
 
-    auto const depth_attachment_ref = vk::AttachmentReference{
-      .attachment = 1,
-      .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-    };
+    //auto const depth_attachment_ref = vk::AttachmentReference{
+    //  .attachment = 1,
+    //  .layout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+    //};
 
     auto const subpass = vk::SubpassDescription{
       .pipelineBindPoint = vk::PipelineBindPoint::eGraphics,
@@ -743,10 +715,10 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   auto frame_buffers = std::invoke([&]{
     auto frame_buffers = std::vector<vk::UniqueFramebuffer>();
     frame_buffers.reserve(swapchain_image_views.size());
-    for(auto const & imageView : swapchain_image_views){
+    for(auto const & image_view : swapchain_image_views){
         
         auto const attachments = std::vector{ 
-            imageView.get(), 
+            image_view.get(), 
             //depthImageView.get() 
         };
 
@@ -765,33 +737,31 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   });
 
   auto command_pool = device->createCommandPoolUnique(vk::CommandPoolCreateInfo{
-      .queueFamilyIndex = static_cast<uint32_t>(graphics_family_index)
+      .queueFamilyIndex = (uint32_t)graphics_family_index
   });
 
-  spdlog::info("Setting up descriptor pools");
-  auto descriptor_pool = std::invoke([&]{
-      auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
-        .type = vk::DescriptorType::eUniformBuffer,
-        .descriptorCount = (uint32_t)swapchain_image_views.size()
-      };
+  //spdlog::info("Setting up descriptor pools");
+  //auto descriptor_pool = std::invoke([&]{
+  //    auto const uniform_buffer_pool_size = vk::DescriptorPoolSize{
+  //      .type = vk::DescriptorType::eUniformBuffer,
+  //      .descriptorCount = (uint32_t)swapchain_image_views.size()
+  //    };
 
-      auto const texture_sampler_pool_size = vk::DescriptorPoolSize{
-        .type = vk::DescriptorType::eCombinedImageSampler,
-        .descriptorCount = (uint32_t)swapchain_image_views.size()
-      };
+  //    auto const texture_sampler_pool_size = vk::DescriptorPoolSize{
+  //      .type = vk::DescriptorType::eCombinedImageSampler,
+  //      .descriptorCount = (uint32_t)swapchain_image_views.size()
+  //    };
 
-      auto const pool_sizes = std::array{uniform_buffer_pool_size, texture_sampler_pool_size};
+  //    auto const pool_sizes = std::array{uniform_buffer_pool_size, texture_sampler_pool_size};
 
-      auto const pool_info = vk::DescriptorPoolCreateInfo{
-        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-        .poolSizeCount = pool_sizes.size(),
-        .pPoolSizes = pool_sizes.data()
-      };
+  //    auto const pool_info = vk::DescriptorPoolCreateInfo{
+  //      .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+  //      .poolSizeCount = pool_sizes.size(),
+  //      .pPoolSizes = pool_sizes.data()
+  //    };
 
-      return device->createDescriptorPoolUnique(pool_info);
-  });
-
-  auto const graphics_queue = device->getQueue(graphics_family_index, 0);
+  //    return device->createDescriptorPoolUnique(pool_info);
+  //});
 
   auto const find_memory_type_index = [&](vk::MemoryRequirements requirements, vk::MemoryPropertyFlags memory_flags)->uint32_t{
       auto const memory_properties = physical_device.getMemoryProperties();
@@ -832,7 +802,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     return std::move(buffer_handles);
   };
 
-  auto const copy_buffer = [&](vk::UniqueBuffer const & src_buffer, vk::UniqueBuffer const & dst_buffer, vk::DeviceSize size){
+  auto const copy_buffer = [&](vk::UniqueBuffer & src_buffer, vk::UniqueBuffer & dst_buffer, vk::DeviceSize size){
     auto command_scope = Command_Scope(device, command_pool, graphics_queue);
     command_scope.command_buffer->copyBuffer(
         *src_buffer, 
@@ -845,18 +815,17 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
     auto const buffer_size = vk::DeviceSize(sizeof(Vertex) * vertices.size());
 
-    auto host_memory_flag_bits = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-
     auto host_buffer_handles = create_buffer(
-        buffer_size, 
-        vk::BufferUsageFlagBits::eTransferSrc, 
-        host_memory_flag_bits
+      buffer_size, 
+      vk::BufferUsageFlagBits::eTransferSrc, 
+      vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
     );
 
     auto vertex_buffer_handles = create_buffer(
-        buffer_size,
-        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, 
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
+      buffer_size,
+      vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, 
+      vk::MemoryPropertyFlagBits::eDeviceLocal
+    );
 
     copy_buffer(host_buffer_handles.buffer, vertex_buffer_handles.buffer, buffer_size);
 
@@ -865,12 +834,6 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   spdlog::info("Settung up index buffers");
   auto index_buffer_handles = std::invoke([&]{
-    auto vertices = std::vector{
-      Vertex{.position={0,0,0}},
-      {.position={1,0,0}},
-      {.position={.5,1,0}}
-    };
-
     auto const buffer_size = vk::DeviceSize(sizeof(Vertex) * vertices.size());
 
     auto host_memory_flag_bits = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
@@ -894,6 +857,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
 
   auto const command_buffer_info = vk::CommandBufferAllocateInfo{
     .commandPool = command_pool.get(),
+    .level = vk::CommandBufferLevel::ePrimary,
     .commandBufferCount =(uint32_t)frame_buffers.size() 
   };
   auto command_buffers = device->allocateCommandBuffersUnique(command_buffer_info);
@@ -902,6 +866,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
   for(auto i = 0; i < frame_buffers.size(); ++i){
     auto const & commandBuffer = command_buffers[i];
     auto const & frame_buffer = frame_buffers[i];
+
+    device->waitIdle();
 
     commandBuffer->begin(vk::CommandBufferBeginInfo{});
 
@@ -920,12 +886,12 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     };
 
     auto const render_pass_info = vk::RenderPassBeginInfo{
-        .renderPass = render_pass.get(), 
-        .framebuffer = frame_buffer.get(), 
-        .renderArea = renderArea, 
-        .clearValueCount = (uint32_t)clearColor.size(),
-        .pClearValues = clearColor.data()
-      };
+      .renderPass = render_pass.get(), 
+      .framebuffer = frame_buffer.get(), 
+      .renderArea = renderArea, 
+      .clearValueCount = (uint32_t)clearColor.size(),
+      .pClearValues = clearColor.data()
+    };
 
     spdlog::trace("adding render pass to command buffer {}", i);
     commandBuffer->beginRenderPass(render_pass_info, vk::SubpassContents::eInline);
@@ -942,7 +908,8 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     vk::DeviceSize offsets[] = {0};
 
     spdlog::trace("binding vertex buffer to command buffer {}", i);
-    commandBuffer->bindVertexBuffers(0, 1, &vertex_buffer_handles.buffer.get(), offsets);
+    auto vertex_buffers = std::array{vertex_buffer_handles.buffer.get()};
+    commandBuffer->bindVertexBuffers(0, vertex_buffers, offsets);
 
     spdlog::trace("binding index buffer to command buffer {}", i);
     commandBuffer->bindIndexBuffer(index_buffer_handles.buffer.get(), 0, vk::IndexType::eUint32);
@@ -957,9 +924,9 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     //  nullptr
     //);
 
-    //commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
+    commandBuffer->draw(static_cast<uint32_t>(vertices.size()),1,0,0);
     spdlog::trace("add draw indexed to command buffer {}", i);
-    commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
+    //commandBuffer->drawIndexed(indices.size(), 1, 0, 0, 0);
 
     spdlog::trace("finnishing up command buffer {}", i);
     commandBuffer->endRenderPass();
@@ -1009,7 +976,7 @@ inline auto create_renderer(GLFWwindow * window) noexcept try{
     .swapchain = std::move(swapchain),
     .swapchain_image_views = std::move(swapchain_image_views),
     .render_pass = std::move(render_pass),
-    .descriptor_set_layout = std::move(descriptor_set_layout),
+    //.descriptor_set_layout = std::move(descriptor_set_layout),
     .vert_shader = std::move(vert_shader),
     .frag_shader = std::move(frag_shader),
     .graphics_pipeline_layout = std::move(graphics_pipeline_layout),
