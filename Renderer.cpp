@@ -684,17 +684,7 @@ auto create_renderer(GLFWwindow * window){
 
   vk_data.command_buffer = command_buffer; 
 
-  auto command_buffer_begin_info = VkCommandBufferBeginInfo{
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    .flags = 0,
-    .pInheritanceInfo = nullptr
-  };
-
-  VkCommandBufferBeginInfo begin_info;
-  if(vkBeginCommandBuffer(command_buffer, &begin_info) != VK_SUCCESS){
-    spdlog::error("Failed to begin recording command buffer.");
-    std::terminate();
-  }
+  
 
   // auto render_pass_begin_info{
   //   .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -709,7 +699,31 @@ auto create_renderer(GLFWwindow * window){
   return vk_data;
 }
 
+auto record_command_buffer(vulkan_data vk_data, uint32_t image_index){
+  auto command_buffer_begin_info = VkCommandBufferBeginInfo{
+    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    .flags = 0,
+    .pInheritanceInfo = nullptr
+  };
 
+  if(vkBeginCommandBuffer(vk_data.command_buffer, &command_buffer_begin_info) != VK_SUCCESS){
+    spdlog::error("Failed to begin recording command buffer.");
+    std::terminate();
+  }
+
+  // auto render_pass_info = VkRenderPassCreateInfo{
+  //   .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+  //   .renderPass = vk_data.render_pass,
+  //   .framebuffer = vk_data.swapchain_framebuffers[image_index],
+  //   .renderArea.offset = {0, 0},
+  //   .renderArea.extent = vk.swapchain_extent
+  // };
+
+}
+
+auto draw_frame(){
+
+}
 
 
 // struct Depth_Image_Handles {
