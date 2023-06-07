@@ -8,6 +8,10 @@ set(CMAKE_BUILD_TYPE=DEBUG)
 
 find_package(Vulkan REQUIRED FATAL_ERROR)
 
+set(SPDLOG_BUILD_EXAMPLE=OFF)
+set(SPDLOG_BUILD_EXAMPLE_HO=OFF)
+
+
 add_subdirectory(spdlog)
 
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
