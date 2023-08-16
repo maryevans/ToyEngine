@@ -1,5 +1,18 @@
 #pragma once
-#include "include.hpp"
+#include "vulkan/vulkan.h"
+// #include "vulkan/vulkan_raii.hpp"
+#include "GLFW/glfw3.h"
+// #include "fmt/format.h"
+// #include "spdlog/spdlog.h"
+#include "glm/glm.hpp"
+
+#include <thread>
+#include <iostream>
+#include <chrono>
+#include <array>
+#include <optional>
+#include <filesystem>
+#include <fstream>
 
 void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator);
 struct vulkan_data{
@@ -25,8 +38,14 @@ struct vulkan_data{
   VkCommandPool command_pool;
   VkCommandBuffer command_buffer;
   std::vector<VkFramebuffer> swapchain_framebuffers;
+
+  VkSemaphore image_available_semaphore, render_finished_semaphore;
+  VkFence in_flight_fence;
   ~vulkan_data(){
-    spdlog::info("In destructor");
+    // spdlog::info("In destructor");
+    vkDestroySemaphore(device, image_available_semaphore, nullptr);
+    vkDestroySemaphore(device, render_finished_semaphore, nullptr);
+    vkDestroyFence(device, in_flight_fence, nullptr);
     vkDestroyCommandPool(device, command_pool, nullptr);
     for(auto framebuffer : swapchain_framebuffers){
       vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -81,13 +100,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     void* pUserData) {
 
   if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){
-    spdlog::error(pCallbackData->pMessage);
+     std::cerr << pCallbackData->pMessage;
   }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT){
-    spdlog::warn(pCallbackData->pMessage);
+    std::cout << pCallbackData->pMessage;
   }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT){
-    spdlog::info(pCallbackData->pMessage);
+    std::cout << pCallbackData->pMessage;
   }else{
-    spdlog::trace(pCallbackData->pMessage);
+    std::cout << pCallbackData->pMessage;
   }
   return VK_FALSE;
 }
@@ -142,7 +161,7 @@ auto create_renderer(GLFWwindow * window){
   VkInstance instance;
 
   if(vkCreateInstance(&instance_info, nullptr, &instance)){
-    spdlog::error("Failed to create instance.");
+    // spdlog::error("Failed to create instance.");
     std::terminate();
   }
 
@@ -163,7 +182,7 @@ auto create_renderer(GLFWwindow * window){
   VkDebugUtilsMessengerEXT debug_messenger;
   
   if(CreateDebugUtilsMessengerEXT(instance, &debug_messenger_info, nullptr, &debug_messenger) != VK_SUCCESS){
-    spdlog::error("Failed to set up debug messenger.");
+    // spdlog::error("Failed to set up debug messenger.");
     std::terminate();
   }
 
@@ -172,7 +191,7 @@ auto create_renderer(GLFWwindow * window){
   VkSurfaceKHR surface;
 
   if(glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS){
-    spdlog::error("Failed to create window surface.");
+    // spdlog::error("Failed to create window surface.");
     std::terminate();
   }
 
@@ -355,7 +374,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkSwapchainKHR swapchain;
   if(vkCreateSwapchainKHR(device, &swapchain_info, nullptr, &swapchain) != VK_SUCCESS){
-    spdlog::error("Failed to create swapchain.");
+    // spdlog::error("Failed to create swapchain.");
     std::terminate();
   }
 
@@ -392,7 +411,7 @@ auto create_renderer(GLFWwindow * window){
       }
     };
     if(vkCreateImageView(device, &image_info, nullptr, &swapchain_image_views.at(i)) != VK_SUCCESS){
-      spdlog::error("Failed to create image views.");
+      // spdlog::error("Failed to create image views.");
       std::terminate();
     }
 
@@ -404,7 +423,7 @@ auto create_renderer(GLFWwindow * window){
     auto error = std::error_code();
     auto const file_size = std::filesystem::file_size(shader, error);
     if(error){
-      spdlog::critical("Unable to read size of shader file. {}", error.message());
+      // spdlog::critical("Unable to read size of shader file. {}", error.message());
       std::abort();
     }
     auto buffer = std::vector<char>(file_size);
@@ -420,18 +439,18 @@ auto create_renderer(GLFWwindow * window){
     // return device->createShaderModuleUnique(shader_info);
     VkShaderModule shader_module;
     if(vkCreateShaderModule(device, &shader_info, nullptr, &shader_module) != VK_SUCCESS){
-      spdlog::error("Failed to create shader module.");
+      // spdlog::error("Failed to create shader module.");
       std::terminate();
     }
 
     return shader_module;
   };
 
-  spdlog::info("Loading shader modules");
+  // spdlog::info("Loading shader modules");
   auto vert_shader = load_shader_module("./vert.spv");
-  spdlog::info("Loaded vert shader");
+  // spdlog::info("Loaded vert shader");
   auto frag_shader = load_shader_module("./frag.spv");
-  spdlog::info("Loaded frag shader");
+  // spdlog::info("Loaded frag shader");
 
 
   auto vert_shader_stage_info = VkPipelineShaderStageCreateInfo{
@@ -558,7 +577,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkPipelineLayout pipeline_layout;
   if(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS){
-    spdlog::error("Failed to create pipeline layout.");
+    // spdlog::error("Failed to create pipeline layout.");
     std::terminate();
   }
 
@@ -596,7 +615,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkRenderPass render_pass;
   if(vkCreateRenderPass(device, &render_pass_info, nullptr, &render_pass) != VK_SUCCESS){
-    spdlog::error("Failed to create render pass");
+    // spdlog::error("Failed to create render pass");
     std::terminate();
   }
 
@@ -624,7 +643,7 @@ auto create_renderer(GLFWwindow * window){
   VkPipeline graphics_pipeline;
 
   if(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS){
-    spdlog::error("Failed to create graphics pipeline.");
+    // spdlog::error("Failed to create graphics pipeline.");
     std::terminate();
   }
 
@@ -648,7 +667,7 @@ auto create_renderer(GLFWwindow * window){
     };
 
     if(vkCreateFramebuffer(device, &framebuffer_info, nullptr, &swapchain_framebuffers.at(i)) != VK_SUCCESS){
-      spdlog::error("Failed to create framebuffer.");
+      // spdlog::error("Failed to create framebuffer.");
       std::terminate();
     }
   }
@@ -661,37 +680,43 @@ auto create_renderer(GLFWwindow * window){
     .queueFamilyIndex = queue_indices.graphics
   };
 
-  VkCommandPool command_pool;
-  if(vkCreateCommandPool(device, &command_pool_info, nullptr, &command_pool) != VK_SUCCESS){
-    spdlog::error("Failed to create command pool.");
+  if(vkCreateCommandPool(device, &command_pool_info, nullptr, &vk_data.command_pool) != VK_SUCCESS){
+    // spdlog::error("Failed to create command pool.");
     std::terminate();
   }
 
-  vk_data.command_pool = command_pool;
 
   auto command_buffer_alloc_info = VkCommandBufferAllocateInfo{
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-    .commandPool = command_pool,
+    .commandPool = vk_data.command_pool,
     .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
     .commandBufferCount = 1
   };
 
   VkCommandBuffer command_buffer;
   if(vkAllocateCommandBuffers(device, &command_buffer_alloc_info, &command_buffer) != VK_SUCCESS){
-    spdlog::error("Failed to allocate command buffers.");
+    // spdlog::error("Failed to allocate command buffers.");
     std::terminate();
   }
 
   vk_data.command_buffer = command_buffer; 
 
   
+  auto semaphore_info = VkSemaphoreCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+  };
 
-  // auto render_pass_begin_info{
-  //   .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-  //   // .renderPass = render_pass,
-  //   // .framebuffer = 
-  // };
+  auto fence_info = VkFenceCreateInfo{
+    .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    .flags = VK_FENCE_CREATE_SIGNALED_BIT
+  };
 
+  if(vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.image_available_semaphore) || 
+     vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.render_finished_semaphore) ||
+     vkCreateFence(device, &fence_info, nullptr, &vk_data.in_flight_fence)){
+    // spdlog::error("Failed to create semaphores.");
+    std::terminate();
+  }
 
 
   vkDestroyShaderModule(device, frag_shader, nullptr);
@@ -707,21 +732,63 @@ auto record_command_buffer(vulkan_data vk_data, uint32_t image_index){
   };
 
   if(vkBeginCommandBuffer(vk_data.command_buffer, &command_buffer_begin_info) != VK_SUCCESS){
-    spdlog::error("Failed to begin recording command buffer.");
+    // spdlog::error("Failed to begin recording command buffer.");
     std::terminate();
   }
 
-  // auto render_pass_info = VkRenderPassCreateInfo{
-  //   .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-  //   .renderPass = vk_data.render_pass,
-  //   .framebuffer = vk_data.swapchain_framebuffers[image_index],
-  //   .renderArea.offset = {0, 0},
-  //   .renderArea.extent = vk.swapchain_extent
-  // };
+  auto clear_color = VkClearValue{{{0.0f, 0.0f, 0.0f, 1.0f}}};
+
+  auto render_pass_info = VkRenderPassBeginInfo{
+    .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+    .renderPass = vk_data.render_pass,
+    .framebuffer = vk_data.swapchain_framebuffers[image_index],
+    .renderArea = VkRect2D{
+      .offset = {0, 0},
+      .extent = vk_data.extent
+    },
+    .clearValueCount = 1,
+    .pClearValues = &clear_color
+  };
+
+  vkCmdBeginRenderPass(vk_data.command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+  vkCmdBindPipeline(vk_data.command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_data.graphics_pipeline);
+
+  auto viewport = VkViewport{
+    .x = 0.0f,
+    .y = 0.0f,
+    .width = static_cast<float>(vk_data.extent.width),
+    .height = static_cast<float>(vk_data.extent.height),
+    .minDepth = 0.0f,
+    .maxDepth = 1.0f
+  };
+  vkCmdSetViewport(vk_data.command_buffer, 0, 1, &viewport);
+
+  auto scissor = VkRect2D{
+    .offset = {0,0},
+    .extent = vk_data.extent
+  };
+  vkCmdSetScissor(vk_data.command_buffer, 0, 1, &scissor);
+
+  // 3 = vertex count
+  // 1 = triangle count
+  // 0 = first vertex
+  // 0 = first instance
+  vkCmdDraw(vk_data.command_buffer, 3, 1, 0, 0);
+
+  vkCmdEndRenderPass(vk_data.command_buffer);
+  if(vkEndCommandBuffer(vk_data.command_buffer) != VK_SUCCESS){
+    std::cout << "Failed to record command buffer." << std::endl;
+  }
 
 }
 
-auto draw_frame(){
+auto draw_frame(vulkan_data vk_data){
+  vkWaitForFences(vk_data.device, 1, &vk_data.in_flight_fence, VK_TRUE, UINT64_MAX);
+  vkResetFences(vk_data.device, 1, &vk_data.in_flight_fence);
+
+  uint32_t image_index;
+  vkAcquireNextImageKHR(vk_data.device, vk_data.swapchain, UINT64_MAX, vk_data.image_available_semaphore, VK_NULL_HANDLE, &image_index);
 
 }
 
