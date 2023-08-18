@@ -6,6 +6,7 @@
 // #include "spdlog/spdlog.h"
 #include "glm/glm.hpp"
 
+#include <exception>
 #include <thread>
 #include <iostream>
 #include <chrono>
@@ -13,13 +14,16 @@
 #include <optional>
 #include <filesystem>
 #include <fstream>
+#include <vector>
+#include <algorithm>
+#include <vulkan/vulkan_core.h>
 
 void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator);
 struct vulkan_data{
   VkInstance instance;
   VkDebugUtilsMessengerEXT debug_messenger;
   VkDevice device;
-  VkQueue present_queue;
+  VkQueue graphics_queue, present_queue;
 
   VkSurfaceKHR surface;
   VkSwapchainKHR swapchain;
@@ -100,13 +104,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     void* pUserData) {
 
   if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){
-     std::cerr << pCallbackData->pMessage;
+     std::cerr << "ERROR: " << pCallbackData->pMessage << "\n";
   }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT){
-    std::cout << pCallbackData->pMessage;
+    std::cout << "WARNING: " << pCallbackData->pMessage << "\n";
   }else if((messageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) == VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT){
-    std::cout << pCallbackData->pMessage;
+    std::cout << "INFO: " << pCallbackData->pMessage << "\n";
   }else{
-    std::cout << pCallbackData->pMessage;
+    std::cout << "IDK MATE: " << pCallbackData->pMessage << "\n";
   }
   return VK_FALSE;
 }
@@ -161,7 +165,7 @@ auto create_renderer(GLFWwindow * window){
   VkInstance instance;
 
   if(vkCreateInstance(&instance_info, nullptr, &instance)){
-    // spdlog::error("Failed to create instance.");
+    std::cerr << "Failed to create instance." << std::endl;
     std::terminate();
   }
 
@@ -182,7 +186,7 @@ auto create_renderer(GLFWwindow * window){
   VkDebugUtilsMessengerEXT debug_messenger;
   
   if(CreateDebugUtilsMessengerEXT(instance, &debug_messenger_info, nullptr, &debug_messenger) != VK_SUCCESS){
-    // spdlog::error("Failed to set up debug messenger.");
+    std::cerr << "Failed to set up debug messenger." << std::endl;
     std::terminate();
   }
 
@@ -191,7 +195,7 @@ auto create_renderer(GLFWwindow * window){
   VkSurfaceKHR surface;
 
   if(glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS){
-    // spdlog::error("Failed to create window surface.");
+    std::cerr << "Failed to create window surface." << std::endl;
     std::terminate();
   }
 
@@ -277,12 +281,12 @@ auto create_renderer(GLFWwindow * window){
 
   vk_data.device = device;
 
-  VkQueue present_queue;
-  vkGetDeviceQueue(device, queue_indices.present, 0, &present_queue);
+  // VkQueue present_queue;
+  vkGetDeviceQueue(device, queue_indices.present, 0, &vk_data.present_queue);
+  vkGetDeviceQueue(device, queue_indices.graphics, 0,  &vk_data.graphics_queue);
+  // vk_data.present_queue = present_queue;
 
-  vk_data.present_queue = present_queue;
-
-
+  // std::cout << "------------------QUEUES: " << queue_indices.present << " " << queue_indices.graphics << std::endl;
 
   VkSurfaceCapabilitiesKHR swapchain_capabilities;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &swapchain_capabilities);
@@ -374,7 +378,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkSwapchainKHR swapchain;
   if(vkCreateSwapchainKHR(device, &swapchain_info, nullptr, &swapchain) != VK_SUCCESS){
-    // spdlog::error("Failed to create swapchain.");
+    std::cerr << "Failed to create swapchain." << std::endl;
     std::terminate();
   }
 
@@ -411,7 +415,7 @@ auto create_renderer(GLFWwindow * window){
       }
     };
     if(vkCreateImageView(device, &image_info, nullptr, &swapchain_image_views.at(i)) != VK_SUCCESS){
-      // spdlog::error("Failed to create image views.");
+      std::cerr << "Failed to create image views." << std::endl;
       std::terminate();
     }
 
@@ -423,8 +427,8 @@ auto create_renderer(GLFWwindow * window){
     auto error = std::error_code();
     auto const file_size = std::filesystem::file_size(shader, error);
     if(error){
-      // spdlog::critical("Unable to read size of shader file. {}", error.message());
-      std::abort();
+      std::cout << "Unable to read size of shader file. " <<  error.message() << std::endl;
+      std::terminate();
     }
     auto buffer = std::vector<char>(file_size);
     file.seekg(0);
@@ -439,7 +443,7 @@ auto create_renderer(GLFWwindow * window){
     // return device->createShaderModuleUnique(shader_info);
     VkShaderModule shader_module;
     if(vkCreateShaderModule(device, &shader_info, nullptr, &shader_module) != VK_SUCCESS){
-      // spdlog::error("Failed to create shader module.");
+      std::cerr << "Failed to create shader module." << std::endl;
       std::terminate();
     }
 
@@ -577,7 +581,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkPipelineLayout pipeline_layout;
   if(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS){
-    // spdlog::error("Failed to create pipeline layout.");
+    std::cerr << "Failed to create pipeline layout." << std::endl;
     std::terminate();
   }
 
@@ -604,18 +608,29 @@ auto create_renderer(GLFWwindow * window){
     .colorAttachmentCount = 1,
     .pColorAttachments = &color_attachment_ref
   };
+  
+  auto dependency = VkSubpassDependency{
+    .srcSubpass = VK_SUBPASS_EXTERNAL,
+    .dstSubpass = 0,
+    .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    .srcAccessMask = 0,
+    .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+  };
 
   auto render_pass_info = VkRenderPassCreateInfo{
     .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
     .attachmentCount = 1,
     .pAttachments = &color_attachment,
     .subpassCount = 1,
-    .pSubpasses = &subpass
+    .pSubpasses = &subpass,
+    .dependencyCount = 1,
+    .pDependencies = &dependency
   };
 
   VkRenderPass render_pass;
   if(vkCreateRenderPass(device, &render_pass_info, nullptr, &render_pass) != VK_SUCCESS){
-    // spdlog::error("Failed to create render pass");
+    std::cerr << "Failed to create render pass" << std::endl;
     std::terminate();
   }
 
@@ -643,7 +658,7 @@ auto create_renderer(GLFWwindow * window){
   VkPipeline graphics_pipeline;
 
   if(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS){
-    // spdlog::error("Failed to create graphics pipeline.");
+    std::cerr << "Failed to create graphics pipeline." << std::endl;
     std::terminate();
   }
 
@@ -667,7 +682,7 @@ auto create_renderer(GLFWwindow * window){
     };
 
     if(vkCreateFramebuffer(device, &framebuffer_info, nullptr, &swapchain_framebuffers.at(i)) != VK_SUCCESS){
-      // spdlog::error("Failed to create framebuffer.");
+      std::cerr << "Failed to create framebuffer." << std::endl;
       std::terminate();
     }
   }
@@ -681,7 +696,7 @@ auto create_renderer(GLFWwindow * window){
   };
 
   if(vkCreateCommandPool(device, &command_pool_info, nullptr, &vk_data.command_pool) != VK_SUCCESS){
-    // spdlog::error("Failed to create command pool.");
+    std::cerr << "Failed to create command pool." << std::endl;
     std::terminate();
   }
 
@@ -695,7 +710,7 @@ auto create_renderer(GLFWwindow * window){
 
   VkCommandBuffer command_buffer;
   if(vkAllocateCommandBuffers(device, &command_buffer_alloc_info, &command_buffer) != VK_SUCCESS){
-    // spdlog::error("Failed to allocate command buffers.");
+    std::cerr << "Failed to allocate command buffers." << std::endl;
     std::terminate();
   }
 
@@ -711,10 +726,10 @@ auto create_renderer(GLFWwindow * window){
     .flags = VK_FENCE_CREATE_SIGNALED_BIT
   };
 
-  if(vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.image_available_semaphore) || 
-     vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.render_finished_semaphore) ||
-     vkCreateFence(device, &fence_info, nullptr, &vk_data.in_flight_fence)){
-    // spdlog::error("Failed to create semaphores.");
+  if(vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.image_available_semaphore) != VK_SUCCESS || 
+     vkCreateSemaphore(device, &semaphore_info, nullptr, &vk_data.render_finished_semaphore) != VK_SUCCESS ||
+     vkCreateFence(device, &fence_info, nullptr, &vk_data.in_flight_fence) != VK_SUCCESS){
+    std::cerr << "Failed to create semaphores." << std::endl;
     std::terminate();
   }
 
@@ -732,7 +747,7 @@ auto record_command_buffer(vulkan_data vk_data, uint32_t image_index){
   };
 
   if(vkBeginCommandBuffer(vk_data.command_buffer, &command_buffer_begin_info) != VK_SUCCESS){
-    // spdlog::error("Failed to begin recording command buffer.");
+    std::cerr << "Failed to begin recording command buffer." << std::endl;
     std::terminate();
   }
 
@@ -789,7 +804,49 @@ auto draw_frame(vulkan_data vk_data){
 
   uint32_t image_index;
   vkAcquireNextImageKHR(vk_data.device, vk_data.swapchain, UINT64_MAX, vk_data.image_available_semaphore, VK_NULL_HANDLE, &image_index);
+  
+  vkResetCommandBuffer(vk_data.command_buffer, 0);
 
+  record_command_buffer(vk_data, image_index);
+
+  
+
+  VkSemaphore wait_semaphores[] = {vk_data.image_available_semaphore};
+  VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+  VkSemaphore signal_semaphores[] = {vk_data.render_finished_semaphore};
+
+  auto submit_info = VkSubmitInfo{
+    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = wait_semaphores,
+    .pWaitDstStageMask = wait_stages,
+    .commandBufferCount = 1,
+    .pCommandBuffers = &vk_data.command_buffer,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = signal_semaphores
+  };
+  
+  std::cout << "FENCE: " << vk_data.in_flight_fence << std::endl;
+
+
+  if(vkQueueSubmit(vk_data.present_queue, 1, &submit_info, vk_data.in_flight_fence) != VK_SUCCESS){
+    std::cerr << "Failed to submit draw command buffer." << std::endl;
+    std::terminate();
+  }
+  
+  VkSwapchainKHR swapchains[] = {vk_data.swapchain};
+
+  auto present_info = VkPresentInfoKHR{
+    .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = signal_semaphores,
+    .swapchainCount = 1,
+    .pSwapchains = swapchains,
+    .pImageIndices = &image_index
+  };
+  
+  vkQueuePresentKHR(vk_data.present_queue, &present_info);
+   
 }
 
 

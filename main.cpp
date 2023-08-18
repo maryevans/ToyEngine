@@ -12,7 +12,7 @@ int main() noexcept{
   auto const window = glfwCreateWindow(690, 690, "wing boo のまちとりしのはまりちのとしま", nullptr, nullptr);
   if(not window) std::abort();
 
-  auto renderer = create_renderer(window); 
+  auto vk_data = create_renderer(window); 
   // spdlog::info("Created renderer {}",1);
   
   // renderer.draw_frame();
@@ -26,6 +26,7 @@ int main() noexcept{
 
   while(not glfwWindowShouldClose(window)){
     glfwPollEvents();
+    draw_frame(vk_data);
   }
 
   glfwDestroyWindow(window);
